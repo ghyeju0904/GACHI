@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(cp /c/dev/project/CHALLY/src/pages/Onboarding.jsx /c/dev/project/CHALLY/src/pages/onboarding/Onboarding.jsx)",
+      "Bash(cp /c/dev/project/CHALLY/src/pages/Home.jsx /c/dev/project/CHALLY/src/pages/home/Home.jsx)",
+      "Bash(cp /c/dev/project/CHALLY/src/pages/Explore.jsx /c/dev/project/CHALLY/src/pages/explore/Explore.jsx)",
+      "Bash(cp /c/dev/project/CHALLY/src/pages/ChallengeDetail.jsx /c/dev/project/CHALLY/src/pages/challenge/ChallengeDetail.jsx)",
+      "Bash(cp /c/dev/project/CHALLY/src/pages/ChallengeCreate.jsx /c/dev/project/CHALLY/src/pages/challenge/ChallengeCreate.jsx)",
+      "WebSearch",
+      "WebFetch(domain:help.figma.com)",
+      "WebFetch(domain:developers.figma.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(start *)",
+      "Bash(cp \"/c/Users/ghyej/Downloads/Moneygraphy-1.1/Moneygraphy Font/WOFF EOT/Moneygraphy-Rounded.woff2\" /c/dev/project/CHALLY/src/assets/fonts/)",
+      "Bash(cp \"/c/Users/ghyej/Downloads/Moneygraphy-1.1/Moneygraphy Font/WOFF EOT/Moneygraphy-Rounded.woff\" /c/dev/project/CHALLY/src/assets/fonts/)",
+      "Bash(cp \"/c/Users/ghyej/Downloads/Moneygraphy-1.1/Moneygraphy Font/WOFF EOT/Moneygraphy-Pixel.woff2\" /c/dev/project/CHALLY/src/assets/fonts/)"
+    ]
+  }
+}
