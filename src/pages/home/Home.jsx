@@ -1,9 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Bell, Flame, ChevronRight, ChevronDown, ChevronUp, Search, Users, Wallet, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { logEvent } from '../../services/logger';
+import { getProfileId } from '../../utils/getProfileId';
 
+const ALL_CATEGORIES = [
+  '미라클모닝', '운동', '스터디', '임장', '취준', '다이어트',
+  '바이브코딩', '독서', '명상', '외국어', '절약', '글쓰기',
+];
 
 function getMemberStatus(members, maxMembers) {
   const ratio = members / maxMembers;
@@ -29,7 +34,9 @@ export default function Home() {
   const [myOpen,          setMyOpen]          = useState(false);
   const [mySubTab,        setMySubTab]        = useState('owned');  // owned | joined
   const [searchQuery,     setSearchQuery]     = useState('');
-  const [activeTab,       setActiveTab]       = useState('추천');
+  const [activeTab,       setActiveTab]       = useState('전체');
+  const [showCatDropdown, setShowCatDropdown] = useState(false);
+  const dropdownRef = useRef(null);
   const [giveUpModal,     setGiveUpModal]     = useState(null);
   const [giveUpStep,      setGiveUpStep]      = useState(1);
   const [givenUpIds,      setGivenUpIds]      = useState(() => {
@@ -46,7 +53,6 @@ export default function Home() {
         .eq('status', 'active')
         .order('created_at', { ascending: false });
 
-      console.log('challenges fetch →', { data, error });
       if (!error && data) {
         setAllChallenges(data.map((ch) => ({
           ...ch,
@@ -65,14 +71,62 @@ export default function Home() {
     logEvent('page_view', '/home');
   }, []);
 
-  // localStorage에서 내 챌린지 / 인증 데이터 로드
+  // 드롭다운 외부 클릭 시 닫기
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowCatDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // 내 챌린지 로드: localStorage 우선 표시 후 Supabase 동기화
   useEffect(() => {
     try { setCertByChallenge(JSON.parse(localStorage.getItem('certified_by_challenge') || '{}')); } catch {}
+
+    // localStorage 즉시 로드
     try {
       const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
       setOwnedChallenges(all.filter((c) => c.role === 'owner'));
       setJoinedFromLS(all.filter((c) => c.role === 'member'));
     } catch {}
+
+    // Supabase에서 동기화 (다른 디바이스에서 참여한 챌린지 반영)
+    const syncFromSupabase = async () => {
+      try {
+        const profileId = await getProfileId();
+        if (!profileId) return;
+
+        const { data, error } = await supabase
+          .from('challenge_members')
+          .select('role, status, joined_at, challenges(*)')
+          .eq('user_id', profileId)
+          .neq('status', 'gave_up');
+
+        if (error || !data) return;
+
+        const synced = data.map((m) => ({
+          id:          m.challenges.id,
+          title:       m.challenges.title,
+          category:    m.challenges.category,
+          deposit:     m.challenges.deposit,
+          dDay:        m.challenges.duration,
+          streak:      0,
+          role:        m.role,
+          maxMembers:  m.challenges.max_members,
+          certifyType: m.challenges.certify_type,
+          joinedAt:    m.joined_at,
+        }));
+
+        // localStorage 갱신
+        localStorage.setItem('my_challenges', JSON.stringify(synced));
+        setOwnedChallenges(synced.filter((c) => c.role === 'owner'));
+        setJoinedFromLS(synced.filter((c) => c.role === 'member'));
+      } catch {}
+    };
+    syncFromSupabase();
   }, []);
 
   const isCertifiedToday = (id) => (certByChallenge[String(id)] || []).includes(todayStr);
@@ -91,6 +145,7 @@ export default function Home() {
     } catch {}
     setJoinedFromLS((prev) => prev.filter((c) => String(c.id) !== challengeId));
     setGivenUpIds((prev) => new Set([...prev, challengeId]));
+    logEvent('challenge_give_up', `/home`, { challenge_id: challengeId, deposit: giveUpModal?.deposit });
     closeGiveUp();
   };
 
@@ -102,33 +157,46 @@ export default function Home() {
   const allMyChallenges = [...ownedChallenges, ...joinedChallenges];
   const pendingCount    = allMyChallenges.filter((c) => !isCertifiedToday(c.id)).length;
 
-  const tabs = ['추천', ...interests, '전체'];
+  // Supabase + localStorage(운영 중 + 참여 중) 통합 챌린지 목록
+  const mergedChallenges = useMemo(() => {
+    const map = new Map(allChallenges.map((c) => [String(c.id), c]));
+    [...ownedChallenges, ...joinedFromLS].forEach((c) => {
+      if (!map.has(String(c.id))) {
+        map.set(String(c.id), {
+          id:         c.id,
+          title:      c.title,
+          category:   c.category,
+          deposit:    c.deposit || 0,
+          members:    0,
+          maxMembers: c.memberCount || c.maxMembers || 30,
+          max_members: c.memberCount || c.maxMembers || 30,
+        });
+      }
+    });
+    return [...map.values()];
+  }, [allChallenges, ownedChallenges, joinedFromLS]);
+
+  const tabs = useMemo(() => {
+    // 온보딩 전체 카테고리 기준, 관심 카테고리 우선 배치
+    const interestFirst = interests.filter((c) => ALL_CATEGORIES.includes(c));
+    const rest          = ALL_CATEGORIES.filter((c) => !interests.includes(c));
+    // Supabase/localStorage에만 있는 추가 카테고리
+    const extraFromData = [...new Set(mergedChallenges.map((c) => c.category))]
+      .filter((c) => !ALL_CATEGORIES.includes(c));
+    return ['전체', ...interestFirst, ...rest, ...extraFromData];
+  }, [interests, mergedChallenges]);
 
   // 사용자가 참여한 챌린지 ID Set (인원 카운트 +1용)
   const joinedIdsSet = useMemo(() => new Set(joinedFromLS.map((c) => String(c.id))), [joinedFromLS]);
 
-  // 검색: Supabase 챌린지 + 내가 개설한 챌린지(owned) 포함
-  const searchableAll = useMemo(() => {
-    const map = new Map(allChallenges.map((c) => [String(c.id), c]));
-    ownedChallenges.forEach((c) => {
-      if (!map.has(String(c.id))) {
-        map.set(String(c.id), { id: c.id, title: c.title, category: c.category, members: 0, maxMembers: c.memberCount || 10, deposit: c.deposit || 0 });
-      }
-    });
-    return [...map.values()];
-  }, [allChallenges, ownedChallenges]);
-
   const displayedChallenges = useMemo(() => {
     if (searchQuery.trim()) {
       const q = searchQuery.trim();
-      return searchableAll.filter((c) => c.title.includes(q) || c.category.includes(q));
+      return mergedChallenges.filter((c) => c.title.includes(q) || c.category.includes(q));
     }
-    if (activeTab === '전체') return allChallenges;
-    if (activeTab === '추천') return interests.length
-      ? allChallenges.filter((c) => interests.includes(c.category))
-      : allChallenges.slice(0, 6);
-    return allChallenges.filter((c) => c.category === activeTab);
-  }, [searchQuery, activeTab, interests, searchableAll, allChallenges]);
+    if (activeTab === '전체') return mergedChallenges;
+    return mergedChallenges.filter((c) => c.category === activeTab);
+  }, [searchQuery, activeTab, mergedChallenges]);
 
   /* ── 내 챌린지 미니 탭 색상 ── */
   const SUB_TAB_STYLES = {
@@ -267,21 +335,30 @@ export default function Home() {
             </h2>
           ) : (
             <>
-              <h2 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                챌린지 둘러보기 <Flame size={16} color="var(--primary)" />
-              </h2>
-              <div className="hide-scrollbar" style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '14px' }}>
-                {tabs.map((tab) => (
-                  <button key={tab} onClick={() => setActiveTab(tab)} style={{
-                    padding: '7px 14px', borderRadius: '20px', flexShrink: 0, cursor: 'pointer',
-                    border: `1px solid ${activeTab === tab ? 'var(--primary)' : 'var(--border-color)'}`,
-                    background: activeTab === tab ? 'var(--primary)' : 'white',
-                    color: activeTab === tab ? 'white' : 'var(--text-muted)',
-                    fontSize: '13px', fontWeight: activeTab === tab ? 'bold' : 'normal',
-                  }}>
-                    {tab === '추천' ? '🔥 추천' : tab}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                  챌린지 둘러보기 <Flame size={16} color="var(--primary)" />
+                </h2>
+
+                {/* 카테고리 드롭다운 */}
+                <div ref={dropdownRef} style={{ position: 'relative' }}>
+                  <button onClick={() => setShowCatDropdown((v) => !v)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '20px', border: '1px solid var(--border-color)', background: activeTab === '전체' ? 'white' : '#FFF0EB', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', color: activeTab === '전체' ? 'var(--text-muted)' : 'var(--primary)' }}>
+                    {activeTab}
+                    <ChevronDown size={14} />
                   </button>
-                ))}
+
+                  {showCatDropdown && (
+                    <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: 'white', border: '1px solid var(--border-color)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)', zIndex: 50, minWidth: '160px', overflow: 'hidden' }}>
+                      {tabs.map((tab) => (
+                        <button key={tab} onClick={() => { setActiveTab(tab); setShowCatDropdown(false); }}
+                          style={{ width: '100%', padding: '10px 14px', textAlign: 'left', border: 'none', background: activeTab === tab ? '#FFF0EB' : 'white', color: activeTab === tab ? 'var(--primary)' : 'var(--text-main)', fontSize: '13px', fontWeight: (activeTab === tab || interests.includes(tab)) ? 'bold' : 'normal', cursor: 'pointer' }}>
+                          {tab}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -295,7 +372,8 @@ export default function Home() {
               {displayedChallenges.map((ch) => {
                 // 사용자가 참여 중이면 인원 +1 반영
                 const effectiveMembers = joinedIdsSet.has(String(ch.id)) ? (ch.members || 0) + 1 : (ch.members || 0);
-                const status = getMemberStatus(effectiveMembers, ch.maxMembers);
+                const maxM = ch.maxMembers || ch.max_members || 30;
+                const status = getMemberStatus(effectiveMembers, maxM);
                 return (
                   <div key={ch.id} onClick={() => navigate(`/challenge/${ch.id}`)}
                     style={{ background: 'var(--card-bg)', borderRadius: '12px', padding: '14px 16px', border: '1px solid var(--border-color)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -306,7 +384,7 @@ export default function Home() {
                       </div>
                       <div style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '6px' }}>{ch.title}</div>
                       <div style={{ display: 'flex', gap: '10px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Users size={11} /> {effectiveMembers}/{ch.maxMembers}명</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Users size={11} /> {effectiveMembers}/{maxM}명</span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Wallet size={11} /> {ch.deposit?.toLocaleString()}원</span>
                       </div>
                     </div>

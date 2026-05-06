@@ -1,16 +1,9 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Camera, CheckSquare, Edit3, Image, X, CheckCircle, ShieldCheck } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { logEvent } from '../../services/logger';
+import { supabase } from '../../services/supabase';
 
-/* 챌린지별 허용 인증 방식 (id → tab key) */
-const CHALLENGE_CERTIFY_TYPE = {
-  1: 'photo', 2: 'photo', 3: 'photo', 4: 'check',
-  5: 'photo', 6: 'text',  7: 'photo', 8: 'photo',
-  9: 'text',  10: 'photo', 11: 'check', 12: 'text',
-};
-
-const LABEL_TO_KEY = { '사진 인증': 'photo', '텍스트 인증': 'text', '체크인': 'check' };
 const KEY_TO_LABEL = { photo: '사진 인증', text: '텍스트 인증', check: '체크인' };
 
 export default function Certify() {
@@ -19,21 +12,8 @@ export default function Certify() {
 
   const today = new Date().toISOString().split('T')[0];
 
-  /* 이 챌린지의 허용 인증 방식 */
-  const allowedType = useMemo(() => {
-    // 정적 목록에서 확인
-    const fromStatic = CHALLENGE_CERTIFY_TYPE[Number(id)];
-    if (fromStatic) return fromStatic;
-    // localStorage 개설 챌린지에서 확인
-    try {
-      const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
-      const ch = owned.find((c) => String(c.id) === String(id));
-      if (ch?.certifyType) return LABEL_TO_KEY[ch.certifyType] || null;
-    } catch {}
-    return null; // null이면 모든 방식 허용
-  }, [id]);
-
-  const [activeTab,      setActiveTab]      = useState(allowedType || 'photo');
+  const [allowedType,    setAllowedType]    = useState(null);
+  const [activeTab,      setActiveTab]      = useState('photo');
   const [photoPreview,   setPhotoPreview]   = useState(null);
   const [photoBase64,    setPhotoBase64]    = useState(null);
   const [textValue,      setTextValue]      = useState('');
@@ -42,12 +22,39 @@ export default function Certify() {
   const galleryInputRef = useRef(null);
   const cameraInputRef  = useRef(null);
 
-  const alreadyCertified = useMemo(() => {
+  // Supabase에서 인증 방식 fetch
+  useEffect(() => {
+    const fetchCertifyType = async () => {
+      const { data, error } = await supabase
+        .from('challenges')
+        .select('certify_type')
+        .eq('id', id)
+        .single();
+
+      if (!error && data) {
+        setAllowedType(data.certify_type);
+        setActiveTab(data.certify_type);
+      } else {
+        // localStorage fallback (내가 개설한 챌린지)
+        try {
+          const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+          const ch = owned.find((c) => String(c.id) === String(id));
+          if (ch?.certifyType) {
+            setAllowedType(ch.certifyType);
+            setActiveTab(ch.certifyType);
+          }
+        } catch {}
+      }
+    };
+    fetchCertifyType();
+  }, [id]);
+
+  const alreadyCertified = (() => {
     try {
       const data = JSON.parse(localStorage.getItem('certified_by_challenge') || '{}');
       return (data[id] || []).includes(today);
     } catch { return false; }
-  }, [id, today]);
+  })();
 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];

@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ArrowLeft, BellRing, Clock, Star, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { logEvent } from '../../services/logger';
 
 export default function Notifications() {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    logEvent('page_view', '/notifications');
+  }, []);
 
   const notis = [
     {

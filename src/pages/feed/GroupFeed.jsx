@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut } from 'lucide-react';
 import { logEvent } from '../../services/logger';
+import { supabase } from '../../services/supabase';
 import { useNavigate, useParams } from 'react-router-dom';
 
 function getRelativeTime(isoStr) {
@@ -13,38 +14,35 @@ function getRelativeTime(isoStr) {
   return `${Math.floor(hrs / 24)}일 전`;
 }
 
-const ALL_CHALLENGES = [
-  { id: 1,  title: '새벽 5시 기상 루틴 21일',     category: '미라클모닝' },
-  { id: 2,  title: '매일 아침 6시 전 일어나기',     category: '미라클모닝' },
-  { id: 3,  title: '하루 30분 홈트레이닝',          category: '운동' },
-  { id: 4,  title: '매일 만보 걷기 30일',           category: '운동' },
-  { id: 5,  title: '매일 1시간 집중 공부',          category: '스터디' },
-  { id: 6,  title: '자격증 합격 30일 스터디',       category: '스터디' },
-  { id: 7,  title: '하루 1시간 바이브코딩',         category: '바이브코딩' },
-  { id: 8,  title: '사이드 프로젝트 30일 완성',     category: '바이브코딩' },
-  { id: 9,  title: '하루 30분 독서 습관',           category: '독서' },
-  { id: 10, title: '다이어트 식단 21일 기록',       category: '다이어트' },
-  { id: 11, title: '매일 명상 10분',                category: '명상' },
-  { id: 12, title: '영어 단어 20개 암기 30일',      category: '외국어' },
-];
-
 export default function GroupFeed() {
   const navigate = useNavigate();
   const { id } = useParams();
 
+  const [challengeTitle, setChallengeTitle] = useState('챌린지 피드');
+
   useEffect(() => {
     logEvent('feed_view', `/feed/${id}`, { challenge_id: id });
-  }, [id]);
 
-  const challengeTitle = useMemo(() => {
-    const found = ALL_CHALLENGES.find((c) => String(c.id) === String(id));
-    if (found) return found.title;
-    try {
-      const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
-      const o = owned.find((c) => String(c.id) === String(id));
-      if (o) return o.title;
-    } catch {}
-    return '챌린지 피드';
+    // Supabase에서 챌린지 제목 fetch
+    const fetchTitle = async () => {
+      const { data, error } = await supabase
+        .from('challenges')
+        .select('title')
+        .eq('id', id)
+        .single();
+
+      if (!error && data) {
+        setChallengeTitle(data.title);
+      } else {
+        // localStorage fallback
+        try {
+          const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+          const found = owned.find((c) => String(c.id) === String(id));
+          if (found) setChallengeTitle(found.title);
+        } catch {}
+      }
+    };
+    fetchTitle();
   }, [id]);
 
   const challengeData = useMemo(() => {
@@ -67,6 +65,7 @@ export default function GroupFeed() {
       const prev = JSON.parse(localStorage.getItem('given_up_challenges') || '[]');
       localStorage.setItem('given_up_challenges', JSON.stringify([...new Set([...prev.map(String), String(id)])]));
     } catch {}
+    logEvent('challenge_give_up', `/feed/${id}`, { challenge_id: id });
     navigate('/home');
   };
 
@@ -77,11 +76,7 @@ export default function GroupFeed() {
         return (allPosts[id] || []).map((p) => ({ ...p, time: getRelativeTime(p.createdAt) }));
       } catch { return []; }
     })();
-    return [
-      ...myPosts,
-      { id: 101, username: '김직장인', avatar: '🐰', time: '10분 전', content: '오늘도 바이브코딩 달렸습니다!!', approve: 8, reject: 1, myVote: null },
-      { id: 102, username: '이대학원', avatar: '🐻', time: '1시간 전', content: '리액트 기초 복습 끝!', approve: 5, reject: 4, myVote: null },
-    ];
+    return [...myPosts];
   });
 
   const totalMembers = 12;

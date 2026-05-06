@@ -2,21 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { ArrowLeft, Users, Clock, Flame, Wallet, ShieldCheck, X, CheckCircle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { logEvent } from '../../services/logger';
+import { supabase } from '../../services/supabase';
+import { getProfileId } from '../../utils/getProfileId';
 
-const ALL_CHALLENGES = [
-  { id: 1,  title: '새벽 5시 기상 루틴 21일',   category: '미라클모닝', duration: '21일', members: 8,  maxMembers: 15, deposit: 10000, certifyType: '사진 인증', description: '매일 새벽 5시에 기상하여 하루를 일찍 시작하는 습관을 만듭니다.' },
-  { id: 2,  title: '매일 아침 6시 전 일어나기',   category: '미라클모닝', duration: '30일', members: 12, maxMembers: 20, deposit: 5000,  certifyType: '사진 인증', description: '아침형 인간이 되기 위한 30일 프로젝트.' },
-  { id: 3,  title: '하루 30분 홈트레이닝',        category: '운동',       duration: '30일', members: 20, maxMembers: 30, deposit: 20000, certifyType: '사진 인증', description: '집에서 30분 운동으로 건강한 습관을 만들어요.' },
-  { id: 4,  title: '매일 만보 걷기 30일',         category: '운동',       duration: '30일', members: 6,  maxMembers: 10, deposit: 10000, certifyType: '체크인', description: '하루 1만 보를 걸으며 건강을 챙겨요.' },
-  { id: 5,  title: '매일 1시간 집중 공부',        category: '스터디',     duration: '30일', members: 9,  maxMembers: 15, deposit: 15000, certifyType: '사진 인증', description: '매일 1시간 집중해서 공부하는 습관을 만들어요.' },
-  { id: 6,  title: '자격증 합격 30일 스터디',     category: '스터디',     duration: '30일', members: 5,  maxMembers: 10, deposit: 30000, certifyType: '텍스트 인증', description: '자격증 취득을 위한 30일 집중 스터디.' },
-  { id: 7,  title: '하루 1시간 바이브코딩',       category: '바이브코딩', duration: '30일', members: 14, maxMembers: 20, deposit: 10000, certifyType: '사진 인증', description: '하루에 1시간씩 사이드 프로젝트나 알고리즘 등을 바이브코딩합니다.' },
-  { id: 8,  title: '사이드 프로젝트 30일 완성',   category: '바이브코딩', duration: '30일', members: 7,  maxMembers: 10, deposit: 20000, certifyType: '사진 인증', description: '30일 안에 나만의 사이드 프로젝트를 완성해요.' },
-  { id: 9,  title: '하루 30분 독서 습관',         category: '독서',       duration: '30일', members: 11, maxMembers: 20, deposit: 5000,  certifyType: '텍스트 인증', description: '매일 30분 독서로 지식을 쌓아요.' },
-  { id: 10, title: '다이어트 식단 21일 기록',     category: '다이어트',   duration: '21일', members: 18, maxMembers: 30, deposit: 15000, certifyType: '사진 인증', description: '21일 동안 건강한 식단을 기록하고 유지해요.' },
-  { id: 11, title: '매일 명상 10분',              category: '명상',       duration: '30일', members: 6,  maxMembers: 15, deposit: 5000,  certifyType: '체크인', description: '하루 10분 명상으로 마음의 평화를 찾아요.' },
-  { id: 12, title: '영어 단어 20개 암기 30일',    category: '외국어',     duration: '30일', members: 8,  maxMembers: 20, deposit: 10000, certifyType: '텍스트 인증', description: '매일 영어 단어 20개를 암기하여 어휘력을 키워요.' },
-];
+const CERTIFY_LABEL = { photo: '사진 인증', text: '텍스트 인증', check: '체크인' };
 
 function getMemberStatus(members, maxMembers) {
   const ratio = members / maxMembers;
@@ -32,22 +21,40 @@ export default function ChallengeDetail() {
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [paying,           setPaying]           = useState(false);
   const [paid,             setPaid]             = useState(false);
+  const [challenge,        setChallenge]        = useState(null);
+  const [loading,          setLoading]          = useState(true);
 
   useEffect(() => {
     logEvent('challenge_view', `/challenge/${id}`, { challenge_id: id });
+
+    const fetchChallenge = async () => {
+      const { data, error } = await supabase
+        .from('challenges')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (!error && data) {
+        setChallenge({
+          ...data,
+          maxMembers:  data.max_members,
+          certifyType: data.certify_type,
+          members:     0,
+        });
+      } else {
+        // localStorage 개설 챌린지 fallback
+        try {
+          const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+          const found = owned.find((c) => String(c.id) === String(id));
+          if (found) setChallenge(found);
+        } catch {}
+      }
+      setLoading(false);
+    };
+    fetchChallenge();
   }, [id]);
 
-  const challenge = useMemo(() => {
-    const found = ALL_CHALLENGES.find((c) => String(c.id) === String(id));
-    if (found) return found;
-    // localStorage owned challenge
-    try {
-      const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
-      return owned.find((c) => String(c.id) === String(id)) || ALL_CHALLENGES[6];
-    } catch { return ALL_CHALLENGES[6]; }
-  }, [id]);
-
-  const memberStatus = getMemberStatus(challenge.members || 0, challenge.maxMembers || 30);
+  const memberStatus = getMemberStatus(challenge?.members || 0, challenge?.maxMembers || 30);
 
   // 이미 참가 중인지 확인
   const alreadyJoined = useMemo(() => {
@@ -59,9 +66,7 @@ export default function ChallengeDetail() {
 
   const handlePay = () => {
     setPaying(true);
-    // 토스페이 연동 시뮬레이션 (1.2초 후 완료)
-    setTimeout(() => {
-      // localStorage에 참여 챌린지 추가
+    setTimeout(async () => {
       const daysTotal  = parseInt(challenge.duration) || 30;
       const todayStr   = new Date().toISOString().split('T')[0];
       const endDateStr = (() => {
@@ -69,8 +74,10 @@ export default function ChallengeDetail() {
         d.setDate(d.getDate() + daysTotal);
         return d.toISOString().split('T')[0];
       })();
+
+      // 1. localStorage 저장
       const newEntry = {
-        id:        Number(id),
+        id:        id,
         title:     challenge.title,
         category:  challenge.category,
         deposit:   challenge.deposit,
@@ -85,6 +92,21 @@ export default function ChallengeDetail() {
       if (!prev.some((c) => String(c.id) === String(id))) {
         localStorage.setItem('my_challenges', JSON.stringify([newEntry, ...prev]));
       }
+
+      // 2. Supabase challenge_members 저장 (디바이스 간 공유)
+      try {
+        const profileId = await getProfileId();
+        if (profileId) {
+          await supabase.from('challenge_members').upsert({
+            challenge_id: id,
+            user_id:      profileId,
+            role:         'member',
+            status:       'active',
+            joined_at:    new Date().toISOString(),
+          }, { onConflict: 'challenge_id,user_id' });
+        }
+      } catch {}
+
       logEvent('challenge_join', `/challenge/${id}`, { challenge_id: id, deposit: challenge.deposit });
       setPaying(false);
       setPaid(true);
@@ -94,6 +116,18 @@ export default function ChallengeDetail() {
       }, 1000);
     }, 1200);
   };
+
+  if (loading) return (
+    <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: 'var(--text-muted)', fontSize: '14px' }}>불러오는 중...</div>
+    </div>
+  );
+
+  if (!challenge) return (
+    <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: 'var(--text-muted)', fontSize: '14px' }}>챌린지를 찾을 수 없어요</div>
+    </div>
+  );
 
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', paddingBottom: '160px' }}>
@@ -116,9 +150,13 @@ export default function ChallengeDetail() {
           </div>
           <h1 style={{ fontSize: '22px', fontWeight: 'bold', marginBottom: '16px' }}>{challenge.title}</h1>
           <div style={{ display: 'flex', gap: '16px', color: 'var(--text-muted)', fontSize: '14px', flexWrap: 'wrap' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={16} /> {challenge.duration}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Clock size={16} /> {typeof challenge.duration === 'number' ? `${challenge.duration}일` : challenge.duration}
+            </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Users size={16} /> {challenge.members}/{challenge.maxMembers}명</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ShieldCheck size={16} /> {challenge.certifyType}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <ShieldCheck size={16} /> {CERTIFY_LABEL[challenge.certifyType] || challenge.certifyType}
+            </span>
           </div>
           <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-color)' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '8px' }}>챌린지 소개</h3>
@@ -193,7 +231,11 @@ export default function ChallengeDetail() {
             </div>
 
             <div style={{ background: '#F8F9FA', borderRadius: '12px', padding: '20px', marginBottom: '16px' }}>
-              {[['챌린지', challenge.title], ['기간', challenge.duration], ['인증 방식', challenge.certifyType]].map(([label, val]) => (
+              {[
+                ['챌린지', challenge.title],
+                ['기간', typeof challenge.duration === 'number' ? `${challenge.duration}일` : challenge.duration],
+                ['인증 방식', CERTIFY_LABEL[challenge.certifyType] || challenge.certifyType],
+              ].map(([label, val]) => (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '14px' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{label}</span>
                   <span style={{ fontWeight: 'bold', textAlign: 'right', maxWidth: '60%' }}>{val}</span>

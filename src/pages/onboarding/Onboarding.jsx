@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Flame } from 'lucide-react';
+import { supabase } from '../../services/supabase';
+import { getDeviceId } from '../../utils/deviceId';
 
 const MAX_SELECT = 5;
 
@@ -22,9 +24,20 @@ export default function Onboarding() {
     }
   };
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
     if (selectedCats.length < 1) return;
     localStorage.setItem('interests', JSON.stringify(selectedCats));
+
+    // Supabase profiles에 관심사 저장 (AI 알고리즘 활용 목적)
+    try {
+      await supabase
+        .from('profiles')
+        .upsert(
+          { device_id: getDeviceId(), interests: selectedCats },
+          { onConflict: 'device_id' }
+        );
+    } catch {}
+
     navigate('/home');
   };
 

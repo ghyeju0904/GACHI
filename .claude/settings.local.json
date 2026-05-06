@@ -19,7 +19,9 @@
       "Bash(cp \"/c/Users/ghyej/Downloads/Moneygraphy-1.1/Moneygraphy Font/WOFF EOT/Moneygraphy-Pixel.woff2\" /c/dev/project/CHALLY/src/assets/fonts/)",
       "Bash(Get-ChildItem -Path \"C:\\\\dev\\\\project\\\\CHALLY\" -Force)",
       "Bash(Select-Object -Property Name, PSIsContainer)",
-      "PowerShell(head *)"
+      "PowerShell(head *)",
+      "Bash(Get-Content \"C:\\\\dev\\\\project\\\\CHALLY\\\\src\\\\pages\\\\home\\\\Home.jsx\")",
+      "Bash(Select-Object -First 30)"
     ]
   }
 }

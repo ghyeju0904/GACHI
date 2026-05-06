@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { PenTool, Shuffle, Wallet, ShieldCheck, Minus, Plus, ChevronLeft, ChevronRight, CalendarDays, Users } from 'lucide-react';
+import { Wallet, ShieldCheck, Minus, Plus, ChevronLeft, ChevronRight, CalendarDays, Shuffle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
+import { getProfileId } from '../../utils/getProfileId';
 
 /* ───────── 상수 ───────── */
 const CATEGORIES = [
@@ -9,31 +10,31 @@ const CATEGORIES = [
   '바이브코딩', '독서', '명상', '외국어', '절약', '글쓰기',
 ];
 
-const TITLE_POOL = {
-  '미라클모닝': ['새벽 5시 기상 루틴 21일 완성', '매일 아침 6시 전 일어나기', '미라클모닝 30일 연속', '아침형 인간 되기 프로젝트', '새벽 루틴 7일 완성'],
-  '운동':       ['하루 30분 홈트레이닝', '매일 만보 걷기 도전', '주 5회 러닝 루틴', '스쿼트 100개 30일', '코어 운동 매일 20분'],
-  '스터디':     ['매일 1시간 집중 공부', '자격증 합격 30일 스터디', '하루 개념 하나씩 정복', '플래너 실천 21일', '오늘의 학습 인증 30일'],
-  '임장':       ['주 1회 임장 기록 남기기', '30일 부동산 공부 챌린지', '매일 시세 체크 루틴', '임장 사진 30일 아카이브', '투자처 탐색 21일'],
-  '취준':       ['자소서 하루 한 줄 챌린지', '매일 직무 공부 30분', '취준 일기 21일 기록', '면접 질문 하루 3개 답변', '스펙 업 30일 플랜'],
-  '다이어트':   ['식단 기록 21일 챌린지', '저탄고지 30일 도전', '하루 1700kcal 지키기', '매일 체중 기록 30일', '간헐적 단식 21일'],
-  '바이브코딩': ['하루 1시간 바이브코딩', '사이드 프로젝트 30일 완성', '매일 깃허브 커밋 도전', '토이 프로젝트 21일 완성', '하루 코드 50줄 챌린지'],
-  '독서':       ['하루 30분 독서 습관', '한 달 책 두 권 읽기', '매일 독서 노트 작성', '읽고 요약하기 30일', '책 한 권 완독 챌린지'],
-  '명상':       ['매일 명상 10분 30일', '호흡 명상 21일 루틴', '마음 챙김 저널 30일', '감사 일기 매일 작성', '무념 명상 7분 챌린지'],
-  '외국어':     ['영어 단어 20개 암기', '매일 회화 문장 3개', '일어 히라가나 완성 14일', '영어 뉴스 하루 한 단락', '듣기 30분 30일 챌린지'],
-  '절약':       ['커피 끊기 30일 챌린지', '무지출 데이 주 3회', '가계부 매일 작성하기', '충동구매 제로 21일', '한 달 용돈 지키기'],
-  '글쓰기':     ['매일 일기 한 페이지', '브런치 글 주 2회 발행', '하루 200자 에세이', '아이디어 노트 매일 작성', '독서 후기 30일 기록'],
+const TITLE_SUGGESTIONS = {
+  '미라클모닝': ['새벽 5시 기상 루틴', '매일 아침 6시 전 기상', '미라클모닝 21일', '아침형 인간 되기', '새벽 루틴 30일'],
+  '운동':       ['하루 30분 홈트레이닝', '매일 만보 걷기', '주 5회 러닝', '코어 운동 매일', '스트레칭 21일'],
+  '스터디':     ['매일 1시간 집중 공부', '자격증 스터디', '하루 한 개념 정복', '오늘의 학습 인증', '플래너 실천'],
+  '임장':       ['주 1회 임장 기록', '부동산 공부 챌린지', '매일 시세 체크', '임장 30일 아카이브', '투자처 탐색'],
+  '취준':       ['자소서 매일 한 줄', '직무 공부 30분', '취준 일기 기록', '면접 질문 답변', '스펙 업 플랜'],
+  '다이어트':   ['식단 기록 챌린지', '저탄고지 도전', '매일 체중 기록', '간헐적 단식', '건강 식단 21일'],
+  '바이브코딩': ['하루 1시간 코딩', '사이드 프로젝트 완성', '매일 깃허브 커밋', '토이 프로젝트', '하루 코드 50줄'],
+  '독서':       ['하루 30분 독서', '한 달 책 두 권', '매일 독서 노트', '책 완독 챌린지', '읽고 요약하기'],
+  '명상':       ['매일 명상 10분', '호흡 명상 루틴', '마음 챙김 저널', '감사 일기 쓰기', '무념 명상 7분'],
+  '외국어':     ['영어 단어 암기', '매일 회화 문장', '듣기 30분 챌린지', '영어 뉴스 읽기', '외국어 공부'],
+  '절약':       ['무지출 데이 챌린지', '가계부 매일 작성', '충동구매 제로', '한 달 용돈 지키기', '절약 습관'],
+  '글쓰기':     ['매일 일기 한 페이지', '브런치 글 발행', '하루 200자 에세이', '아이디어 노트', '독서 후기'],
 };
 
-const EXISTING_TITLES = new Set([
-  '새벽 5시 기상 루틴 21일 완성', '매일 1시간 집중 공부',
-  '하루 1시간 바이브코딩', '매일 만보 걷기 도전',
-]);
+function getRandomTitle(category) {
+  const pool = TITLE_SUGGESTIONS[category];
+  if (!pool) return '';
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
 const DEPOSIT_OPTIONS  = [5000, 10000, 20000, 50000];
 const CERTIFY_TYPES    = [{ id: 'photo', label: '사진 인증' }, { id: 'text', label: '텍스트 인증' }, { id: 'check', label: '체크인' }];
 const DAY_TYPE_OPTIONS = [{ id: 'weekday', label: '평일' }, { id: 'weekend', label: '주말' }, { id: 'all', label: '평일 및 주말' }];
 const DURATION_PRESETS = [{ label: '7일', days: 7 }, { label: '14일', days: 14 }, { label: '21일', days: 21 }, { label: '30일', days: 30 }];
-
 const STEP_LABELS = ['카테고리', '제목', '기간', '인원', '보증금', '인증 방식'];
 
 /* ───────── 유틸 ───────── */
@@ -44,12 +45,6 @@ function addDays(dateStr, days) {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
   return toDateString(d);
-}
-function generateUniqueTitle(category) {
-  if (!TITLE_POOL[category]) return '';
-  const pool = TITLE_POOL[category].filter((t) => !EXISTING_TITLES.has(t));
-  const src  = pool.length ? pool : TITLE_POOL[category];
-  return src[Math.floor(Math.random() * src.length)];
 }
 
 /* ───────── 컴포넌트 ───────── */
@@ -142,20 +137,20 @@ export default function ChallengeCreate() {
     /* 1: 제목 */
     <div key="title">
       <h2 style={s.stepTitle}>챌린지 이름을 정해주세요</h2>
-      <p style={s.stepDesc}>직접 입력하거나 랜덤 생성을 사용하세요</p>
+      <p style={s.stepDesc}>어떤 습관을 만들고 싶나요?</p>
       <div style={{ marginTop: '28px' }}>
         <input
           type="text" value={title} onChange={(e) => setTitle(e.target.value)}
-          placeholder="어떤 습관을 만들고 싶나요?"
+          placeholder="챌린지 이름을 입력해주세요"
           style={{ width: '100%', padding: '16px', borderRadius: '12px', border: '1.5px solid var(--border-color)', fontSize: '16px', outline: 'none', boxSizing: 'border-box' }}
           autoFocus
         />
-        <button onClick={() => setTitle(generateUniqueTitle(category))} style={{
-          marginTop: '14px', background: '#FFF0EB', color: 'var(--primary)', border: 'none',
+        <button onClick={() => setTitle(getRandomTitle(category))} style={{
+          marginTop: '12px', background: '#FFF0EB', color: 'var(--primary)', border: 'none',
           padding: '12px 20px', borderRadius: '10px', fontSize: '14px', fontWeight: 'bold',
           display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', width: '100%', justifyContent: 'center',
         }}>
-          <Shuffle size={16} /> '{category}' 랜덤 제목 생성
+          <Shuffle size={16} /> 랜덤 제목 추천
         </button>
         {title && <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px', textAlign: 'right' }}>{title.length}자</p>}
       </div>
@@ -404,6 +399,21 @@ export default function ChallengeCreate() {
 
               if (!error && sbData) supabaseId = sbData.id;
               else console.error('챌린지 저장 실패:', error);
+
+              // challenge_members에 owner로 저장 (디바이스 간 공유)
+              if (supabaseId) {
+                try {
+                  const profileId = await getProfileId();
+                  if (profileId) {
+                    await supabase.from('challenge_members').insert({
+                      challenge_id: supabaseId,
+                      user_id:      profileId,
+                      role:         'owner',
+                      status:       'active',
+                    });
+                  }
+                } catch {}
+              }
 
               // localStorage에도 저장 (내 챌린지 표시용)
               const newChallenge = {
