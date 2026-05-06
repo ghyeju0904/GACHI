@@ -66,8 +66,11 @@ export default function ChallengeCreate() {
   const [dayType,      setDayType]       = useState('all');
   const [excludeHoliday, setExcludeHoliday] = useState(false);
   const [memberCount,  setMemberCount]   = useState('2'); // 문자열로 관리 — 빈 칸 허용
-  const [deposit,      setDeposit]       = useState(10000);
-  const [certifyType,  setCertifyType]   = useState('photo');
+  const [deposit,           setDeposit]           = useState(10000);
+  const [certifyType,       setCertifyType]       = useState('photo');
+  const [recruitDays,       setRecruitDays]       = useState(3);
+  const [description,       setDescription]       = useState('');
+  const [ownerParticipates, setOwnerParticipates] = useState(true);
 
   /* 스텝 상태 */
   const [step,      setStep]      = useState(0);
@@ -152,7 +155,21 @@ export default function ChallengeCreate() {
         }}>
           <Shuffle size={16} /> 랜덤 제목 추천
         </button>
-        {title && <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px', textAlign: 'right' }}>{title.length}자</p>}
+        {title && <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', textAlign: 'right' }}>{title.length}자</p>}
+
+        {/* 챌린지 소개 (선택) */}
+        <div style={{ marginTop: '20px' }}>
+          <label style={{ ...s.fieldLabel, marginBottom: '8px', display: 'block' }}>
+            챌린지 소개 <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(선택)</span>
+          </label>
+          <textarea
+            value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="어떤 챌린지인지 간단히 소개해주세요"
+            maxLength={200}
+            style={{ width: '100%', height: '100px', padding: '14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', resize: 'none', outline: 'none', fontSize: '14px', fontFamily: 'inherit', boxSizing: 'border-box' }}
+          />
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'right', marginTop: '4px' }}>{description.length}/200</p>
+        </div>
       </div>
     </div>,
 
@@ -232,11 +249,30 @@ export default function ChallengeCreate() {
           </button>
         </div>
 
+        {/* 모집 기간 */}
+        <div>
+          <p style={s.fieldLabel}><CalendarDays size={14} color="var(--primary)" /> 인원 모집 기간 (최대 7일)</p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {[1, 3, 5, 7].map((d) => (
+              <button key={d} onClick={() => setRecruitDays(d)} style={{
+                flex: 1, padding: '11px 0', borderRadius: '8px', cursor: 'pointer', fontSize: '14px',
+                border: `1px solid ${recruitDays === d ? 'var(--primary)' : 'var(--border-color)'}`,
+                background: recruitDays === d ? '#FFF0EB' : 'white',
+                color: recruitDays === d ? 'var(--primary)' : 'var(--text-main)',
+                fontWeight: recruitDays === d ? 'bold' : 'normal',
+              }}>{d}일</button>
+            ))}
+          </div>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+            모집 마감일: {addDays(today, recruitDays)} · 만원 시 자동 마감
+          </p>
+        </div>
+
         {/* 요약 */}
         {startDate && endDate && (
           <div style={{ padding: '12px 16px', background: '#FFF0EB', borderRadius: '10px', fontSize: '13px', color: 'var(--primary)', fontWeight: 'bold' }}>
             {startDate} ~ {endDate} · {dayType === 'weekday' ? '평일' : dayType === 'weekend' ? '주말' : '매일'} 인증
-            {excludeHoliday ? ' · 공휴일 제외' : ''}
+            {excludeHoliday ? ' · 공휴일 제외' : ''} · 모집 {recruitDays}일
           </div>
         )}
       </div>
@@ -260,7 +296,31 @@ export default function ChallengeCreate() {
           <Plus size={22} color="white" />
         </button>
       </div>
-      <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '14px', color: 'var(--text-muted)' }}>명 참여 가능</p>
+      <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '14px', color: 'var(--text-muted)' }}>
+        명 참여 가능{ownerParticipates ? ' (운영자 포함)' : ''}
+      </p>
+
+      {/* 운영자 참여 여부 */}
+      <div style={{ marginTop: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#F8F9FA', borderRadius: '12px' }}>
+        <div>
+          <div style={{ fontSize: '14px', fontWeight: 'bold' }}>운영자(나)도 참여할게요</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+            {ownerParticipates ? '참여 인원에 운영자가 포함됩니다' : '운영자는 관리자 역할만 합니다'}
+          </div>
+        </div>
+        <button onClick={() => setOwnerParticipates((v) => !v)} style={{
+          width: '52px', height: '28px', borderRadius: '14px', border: 'none', cursor: 'pointer',
+          background: ownerParticipates ? 'var(--primary)' : '#D1D5DB',
+          position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+        }}>
+          <span style={{
+            position: 'absolute', top: '3px',
+            left: ownerParticipates ? '27px' : '3px',
+            width: '22px', height: '22px', borderRadius: '50%', background: 'white',
+            transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+          }} />
+        </button>
+      </div>
     </div>,
 
     /* 4: 보증금 */
@@ -388,11 +448,14 @@ export default function ChallengeCreate() {
                 .insert({
                   title,
                   category,
-                  duration:     durationDays,
-                  max_members:  parseInt(memberCount) || 2,
+                  description:           description.trim() || null,
+                  duration:              durationDays,
+                  max_members:           parseInt(memberCount) || 2,
                   deposit,
-                  certify_type: certifyType,
-                  status:       'active',
+                  certify_type:          certifyType,
+                  status:                'active',
+                  recruitment_end_date:  addDays(today, recruitDays),
+                  owner_participates:    ownerParticipates,
                 })
                 .select()
                 .single();
@@ -400,7 +463,7 @@ export default function ChallengeCreate() {
               if (!error && sbData) supabaseId = sbData.id;
               else console.error('챌린지 저장 실패:', error);
 
-              // challenge_members에 owner로 저장 (디바이스 간 공유)
+              // challenge_members에 owner로 저장
               if (supabaseId) {
                 try {
                   const profileId = await getProfileId();
@@ -409,7 +472,7 @@ export default function ChallengeCreate() {
                       challenge_id: supabaseId,
                       user_id:      profileId,
                       role:         'owner',
-                      status:       'active',
+                      status:       ownerParticipates ? 'active' : 'observer',
                     });
                   }
                 } catch {}

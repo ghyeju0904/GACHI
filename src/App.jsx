@@ -7,6 +7,7 @@ import Home from './pages/home/Home';
 import Explore from './pages/explore/Explore';
 import ChallengeDetail from './pages/challenge/ChallengeDetail';
 import ChallengeCreate from './pages/challenge/ChallengeCreate';
+import ChallengeManage from './pages/manage/ChallengeManage';
 import Certify from './pages/certify/Certify';
 import GroupFeed from './pages/feed/GroupFeed';
 import Profile from './pages/profile/Profile';
@@ -31,6 +32,7 @@ function App() {
           <Route path="/result/:id" element={<ChallengeResult />} />
 
           <Route path="/create" element={<ChallengeCreate />} />
+          <Route path="/manage/:id" element={<ChallengeManage />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/profile/edit" element={<ProfileEdit />} />
           <Route path="/notifications" element={<Notifications />} />

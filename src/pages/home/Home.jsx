@@ -205,7 +205,7 @@ export default function Home() {
   };
 
   const MiniChallengeRow = ({ ch, isOwned, onGiveUp }) => (
-    <div onClick={() => navigate(`/feed/${ch.id}`)}
+    <div onClick={() => navigate(isOwned ? `/manage/${ch.id}` : `/feed/${ch.id}`)}
       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 4px', borderBottom: '1px solid #F3F4F6', cursor: 'pointer' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.title}</div>

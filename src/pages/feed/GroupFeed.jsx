@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut } from 'lucide-react';
+import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut, Settings } from 'lucide-react';
 import { logEvent } from '../../services/logger';
 import { supabase } from '../../services/supabase';
 import { getProfileId } from '../../utils/getProfileId';
@@ -19,23 +19,27 @@ export default function GroupFeed() {
   const navigate = useNavigate();
   const { id } = useParams();
 
-  const [challengeTitle, setChallengeTitle] = useState('챌린지 피드');
+  const [challengeTitle,      setChallengeTitle]      = useState('챌린지 피드');
+  const [earlyCloseActive,    setEarlyCloseActive]    = useState(false);
+  const [earlyCloseStartedAt, setEarlyCloseStartedAt] = useState(null);
+  const [myCloseVote,         setMyCloseVote]         = useState(null);
+  const [closeVoteCount,      setCloseVoteCount]      = useState(0);
 
   useEffect(() => {
     logEvent('feed_view', `/feed/${id}`, { challenge_id: id });
 
-    // Supabase에서 챌린지 제목 fetch
     const fetchTitle = async () => {
       const { data, error } = await supabase
         .from('challenges')
-        .select('title')
+        .select('title, early_close_active, early_close_started_at')
         .eq('id', id)
         .single();
 
       if (!error && data) {
         setChallengeTitle(data.title);
+        setEarlyCloseActive(data.early_close_active || false);
+        setEarlyCloseStartedAt(data.early_close_started_at || null);
       } else {
-        // localStorage fallback
         try {
           const owned = JSON.parse(localStorage.getItem('my_challenges') || '[]');
           const found = owned.find((c) => String(c.id) === String(id));
@@ -43,7 +47,44 @@ export default function GroupFeed() {
         } catch {}
       }
     };
+
+    const fetchCloseVotes = async () => {
+      const profileId = await getProfileId();
+      const { data: votes } = await supabase
+        .from('early_close_votes')
+        .select('user_id, agreed')
+        .eq('challenge_id', id);
+      setCloseVoteCount((votes || []).filter((v) => v.agreed).length);
+      setMyCloseVote((votes || []).find((v) => v.user_id === profileId)?.agreed ?? null);
+    };
+
     fetchTitle();
+    fetchCloseVotes();
+
+    // 실시간 구독 — 운영자가 투표 시작하면 참여자 화면 즉시 반영
+    const challengeChannel = supabase
+      .channel(`challenge_close_${id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'challenges',
+        filter: `id=eq.${id}`,
+      }, (payload) => {
+        setEarlyCloseActive(payload.new.early_close_active || false);
+        setEarlyCloseStartedAt(payload.new.early_close_started_at || null);
+      })
+      .subscribe();
+
+    const votesChannel = supabase
+      .channel(`close_votes_${id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'early_close_votes',
+        filter: `challenge_id=eq.${id}`,
+      }, () => { fetchCloseVotes(); })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(challengeChannel);
+      supabase.removeChannel(votesChannel);
+    };
   }, [id]);
 
   const challengeData = useMemo(() => {
@@ -73,6 +114,7 @@ export default function GroupFeed() {
   const [posts,        setPosts]        = useState([]);
   const [totalMembers, setTotalMembers] = useState(0);
   const [myProfileId,  setMyProfileId]  = useState(null);
+  const [isOwner,      setIsOwner]      = useState(false);
 
   useEffect(() => {
     const fetchFeed = async () => {
@@ -104,12 +146,18 @@ export default function GroupFeed() {
         })));
       }
 
-      // 참여자 수
-      const { count } = await supabase
-        .from('challenge_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('challenge_id', id);
-      setTotalMembers(count || 0);
+      // 참여자 수 + 운영자 여부 확인
+      const [{ data: memberData }, { data: chData }] = await Promise.all([
+        supabase.from('challenge_members').select('role, user_id, status').eq('challenge_id', id),
+        supabase.from('challenges').select('created_by, owner_participates').eq('id', id).single(),
+      ]);
+
+      const active = (memberData || []).filter((m) => m.status !== 'observer');
+      setTotalMembers(active.length);
+      setIsOwner(
+        (memberData || []).some((m) => m.user_id === profileId && m.role === 'owner') ||
+        chData?.created_by === profileId
+      );
     };
     fetchFeed();
   }, [id]);
@@ -163,25 +211,99 @@ export default function GroupFeed() {
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', paddingBottom: '100px' }}>
       <header style={{ padding: '16px 20px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <ArrowLeft size={24} style={{ cursor: 'pointer', marginRight: '16px' }} onClick={() => navigate('/home')} />
-          <h1 className="font-display" style={{ fontSize: '15px', margin: 0, color: 'var(--primary)' }}>{challengeTitle}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ArrowLeft size={24} style={{ cursor: 'pointer' }} onClick={() => navigate('/home')} />
+          <div>
+            <h1 className="font-display" style={{ fontSize: '15px', margin: 0, color: 'var(--primary)' }}>{challengeTitle}</h1>
+            {isOwner && (
+              <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'white', background: 'var(--secondary)', padding: '1px 8px', borderRadius: '10px' }}>
+                운영자 모드
+              </span>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {/* 중도 포기 버튼 */}
-          <button onClick={openGiveUp}
+          {isOwner ? (
+            /* 운영자: 관리 페이지 버튼만 표시 */
+            <button onClick={() => navigate(`/manage/${id}`)}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--secondary)', border: 'none', borderRadius: '20px', padding: '6px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'white' }}>
+              <Settings size={14} /> 챌린지 관리
+            </button>
+          ) : (
+            /* 참여자: 포기 버튼 표시 */
+            <button onClick={openGiveUp}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'var(--text-muted)' }}>
+              <LogOut size={14} /> 포기
+            </button>
+          )}
+          <button onClick={() => navigate(`/result/${id}`)}
             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <LogOut size={14} /> 포기
-          </button>
-          {/* 챌린지 종료 결과 보기 버튼 */}
-          <button
-            onClick={() => navigate(`/result/${id}`)}
-            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'var(--text-muted)' }}
-          >
             <Trophy size={14} /> 결과보기
           </button>
         </div>
       </header>
+
+      {/* 완주 전 마감 투표 배너 */}
+      {earlyCloseActive && (() => {
+        const deadline   = earlyCloseStartedAt ? new Date(new Date(earlyCloseStartedAt).getTime() + 24 * 60 * 60 * 1000) : null;
+        const hoursLeft  = deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 3600000)) : null;
+        const isExpired  = deadline && Date.now() > deadline.getTime();
+        return (
+          <div style={{ padding: '14px 20px', background: '#FFF5F5', borderBottom: '1px solid #FFD4C8' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <p style={{ fontSize: '14px', fontWeight: 'bold', color: '#EF4444', margin: 0 }}>
+                ⚠️ 완주 전 마감 투표 진행 중
+              </p>
+              {!isExpired && hoursLeft !== null && (
+                <span style={{ fontSize: '12px', color: '#EF4444', fontWeight: 'bold' }}>
+                  ⏱ {hoursLeft}시간 남음
+                </span>
+              )}
+              {isExpired && (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>투표 마감</span>
+              )}
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+              동의 시 챌린지가 조기 종료되고 보증금이 100% 반환돼요 · 현재 {closeVoteCount}명 동의
+            </p>
+            {isExpired ? (
+              <div style={{ padding: '10px', background: '#F3F4F6', borderRadius: '8px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
+                투표 기간이 종료됐어요
+              </div>
+            ) : myCloseVote === null ? (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={async () => {
+                  const profileId = await getProfileId();
+                  if (!profileId) return;
+                  await supabase.from('early_close_votes').upsert(
+                    { challenge_id: id, user_id: profileId, agreed: true },
+                    { onConflict: 'challenge_id,user_id' }
+                  );
+                  setMyCloseVote(true);
+                  setCloseVoteCount((v) => v + 1);
+                }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: '#EF4444', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>
+                  동의
+                </button>
+                <button onClick={async () => {
+                  const profileId = await getProfileId();
+                  if (!profileId) return;
+                  await supabase.from('early_close_votes').upsert(
+                    { challenge_id: id, user_id: profileId, agreed: false },
+                    { onConflict: 'challenge_id,user_id' }
+                  );
+                  setMyCloseVote(false);
+                }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-muted)' }}>
+                  반대
+                </button>
+              </div>
+            ) : (
+              <div style={{ padding: '10px', background: myCloseVote ? '#FEF2F2' : '#F3F4F6', borderRadius: '8px', textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: myCloseVote ? '#EF4444' : 'var(--text-muted)' }}>
+                {myCloseVote ? '✓ 동의했어요' : '✗ 반대했어요'}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 그룹 달성률 요약 */}
       <div style={{ padding: '16px 20px', background: 'white', borderBottom: '1px solid var(--border-color)' }}>
@@ -309,7 +431,7 @@ export default function GroupFeed() {
           onClick={() => navigate(`/certify/${id}`)}
           style={{ width: '100%', padding: '16px', background: 'var(--primary)', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}
         >
-          오늘도 챌리 불꽃 지켜! (인증하기)
+          인증하기
         </button>
       </div>
 
