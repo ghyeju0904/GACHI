@@ -7,8 +7,8 @@ import { getDeviceId } from '../../utils/deviceId';
 const MAX_SELECT = 5;
 
 const CATEGORIES = [
-  '미라클모닝', '운동', '스터디', '임장', '취준', '다이어트',
-  '바이브코딩', '독서', '명상', '외국어', '절약', '글쓰기',
+  '미라클모닝', '스터디', '식단', '운동',
+  '독서', '외국어', 'SNS 업로드', '기타'
 ];
 
 export default function Onboarding() {
