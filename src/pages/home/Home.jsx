@@ -26,8 +26,9 @@ export default function Home() {
     catch { return []; }
   }, []);
 
-  const [allChallenges,   setAllChallenges]   = useState([]);
+  const [allChallenges,     setAllChallenges]     = useState([]);
   const [loadingChallenges, setLoadingChallenges] = useState(true);
+  const [unreadCount,       setUnreadCount]       = useState(0);
   const [certByChallenge, setCertByChallenge] = useState({});
   const [ownedChallenges, setOwnedChallenges] = useState([]);
   const [joinedFromLS,    setJoinedFromLS]    = useState([]);
@@ -66,9 +67,35 @@ export default function Home() {
     fetchChallenges();
   }, []);
 
-  // 홈 진입 로그
+  // 홈 진입 로그 + 읽지 않은 알림 수 + 실시간 구독
   useEffect(() => {
     logEvent('page_view', '/home');
+
+    let channel = null;
+    const init = async () => {
+      const profileId = await getProfileId();
+      if (!profileId) return;
+
+      const { count } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', profileId)
+        .eq('read', false);
+      setUnreadCount(count || 0);
+
+      // 새 알림 실시간 수신
+      channel = supabase
+        .channel(`notif_${profileId}`)
+        .on('postgres_changes', {
+          event: 'INSERT', schema: 'public', table: 'notifications',
+          filter: `user_id=eq.${profileId}`,
+        }, () => {
+          setUnreadCount((n) => n + 1);
+        })
+        .subscribe();
+    };
+    init();
+    return () => { if (channel) supabase.removeChannel(channel); };
   }, []);
 
   // 드롭다운 외부 클릭 시 닫기
@@ -103,11 +130,14 @@ export default function Home() {
           .from('challenge_members')
           .select('role, status, joined_at, challenges(*)')
           .eq('user_id', profileId)
-          .neq('status', 'gave_up');
+          .neq('status', 'gave_up')
+          .neq('status', 'kicked');
 
         if (error || !data) return;
 
-        const synced = data.map((m) => ({
+        const synced = data
+          .filter((m) => m.challenges?.status === 'active')
+          .map((m) => ({
           id:          m.challenges.id,
           title:       m.challenges.title,
           category:    m.challenges.category,
@@ -240,9 +270,13 @@ export default function Home() {
 
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', background: 'var(--card-bg)', position: 'sticky', top: 0, zIndex: 10 }}>
         <h1 className="font-display" style={{ fontSize: '26px', color: 'var(--primary)', margin: 0, letterSpacing: '-0.5px' }}>GACHI</h1>
-        <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => navigate('/notifications')}>
+        <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => { navigate('/notifications'); setUnreadCount(0); }}>
           <Bell size={24} color="var(--text-main)" />
-          <span style={{ position: 'absolute', top: 0, right: 0, width: '8px', height: '8px', background: 'var(--primary)', borderRadius: '50%' }} />
+          {unreadCount > 0 && (
+            <span style={{ position: 'absolute', top: -4, right: -4, minWidth: '16px', height: '16px', background: '#EF4444', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </div>
       </header>
 

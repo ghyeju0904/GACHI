@@ -14,10 +14,13 @@ export default function ChallengeManage() {
   const [closeVotes,   setCloseVotes]   = useState([]);
   const [myProfileId,  setMyProfileId]  = useState(null);
   const [loading,      setLoading]      = useState(true);
-  const [extendDays,   setExtendDays]   = useState(1);
-  const [showExtend,   setShowExtend]   = useState(false);
-  const [showClose,    setShowClose]    = useState(false);
-  const [countdown,    setCountdown]    = useState('');
+  const [extendDays,        setExtendDays]        = useState(1);
+  const [showExtend,        setShowExtend]        = useState(false);
+  const [showClose,         setShowClose]         = useState(false);
+  const [countdown,         setCountdown]         = useState('');
+  const [voteActive,        setVoteActive]        = useState(false);
+  const [voteStartedAt,     setVoteStartedAt]     = useState(null);
+  const [kickTarget,        setKickTarget]        = useState(null);
 
   const fetchAll = async () => {
     const profileId = await getProfileId();
@@ -31,6 +34,8 @@ export default function ChallengeManage() {
     ]);
 
     setChallenge(ch);
+    setVoteActive(ch?.early_close_active || false);
+    setVoteStartedAt(ch?.early_close_started_at || null);
     const certIds = new Set((certs || []).map((c) => c.user_id));
     setMembers((mems || []).map((m) => ({ ...m, certifiedToday: certIds.has(m.user_id) })));
     setCloseVotes(votes || []);
@@ -41,8 +46,8 @@ export default function ChallengeManage() {
 
   // 카운트다운 타이머
   useEffect(() => {
-    if (!challenge?.early_close_started_at) return;
-    const deadline = new Date(new Date(challenge.early_close_started_at).getTime() + 24 * 60 * 60 * 1000);
+    if (!voteStartedAt) return;
+    const deadline = new Date(new Date(voteStartedAt).getTime() + 24 * 60 * 60 * 1000);
     const tick = () => {
       const diff = deadline - Date.now();
       if (diff <= 0) { setCountdown('00:00:00'); return; }
@@ -54,7 +59,7 @@ export default function ChallengeManage() {
     tick();
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [challenge?.early_close_started_at]);
+  }, [voteStartedAt]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#F8F9FA' }}>
@@ -85,9 +90,7 @@ export default function ChallengeManage() {
   const closePercent = memberCount > 0 ? Math.round((agreedCount / memberCount) * 100) : 0;
   const canConfirmClose = agreedCount >= threshold && threshold > 0;
 
-  const voteStartedAt  = challenge?.early_close_started_at;
   const voteDeadline   = voteStartedAt ? new Date(new Date(voteStartedAt).getTime() + 24 * 60 * 60 * 1000) : null;
-  const hoursLeft      = voteDeadline ? Math.max(0, Math.ceil((voteDeadline - Date.now()) / 3600000)) : null;
   const isVoteExpired  = voteDeadline && Date.now() > voteDeadline.getTime();
 
   const getDaysLeft = (dateStr) => {
@@ -109,16 +112,73 @@ export default function ChallengeManage() {
     fetchAll();
   };
 
-  // 완주 전 마감 투표 시작
+  // 챌린지 중지 요청
   const handleStartCloseVote = async () => {
+    console.log('[VOTE] 시작');
     const now = new Date().toISOString();
-    await supabase.from('challenges').update({
-      early_close_active:    true,
-      early_close_started_at: now,
-    }).eq('id', id);
+
     setShowClose(false);
-    setChallenge((prev) => ({ ...prev, early_close_active: true, early_close_started_at: now }));
-    fetchAll();
+    setVoteActive(true);
+    setVoteStartedAt(now);
+    console.log('[VOTE] UI 업데이트 완료 - voteActive=true');
+
+    const { data: updData, error } = await supabase
+      .from('challenges')
+      .update({ early_close_active: true, early_close_started_at: now })
+      .eq('id', id)
+      .select();
+
+    console.log('[VOTE] Supabase update 결과:', { updData, error });
+
+    if (error) {
+      console.error('[VOTE] 업데이트 실패 → UI 롤백:', error.message, error.code);
+      setVoteActive(false);
+      setVoteStartedAt(null);
+      return;
+    }
+
+    console.log('[VOTE] members 목록:', members);
+    console.log('[VOTE] myProfileId:', myProfileId);
+
+    const notifTargets = members
+      .filter((m) => m.user_id !== myProfileId)
+      .map((m) => ({
+        user_id:      m.user_id,
+        challenge_id: id,
+        type:         'early_close_request',
+        message:      `'${challenge.title}' 챌린지 운영자가 중지를 요청했어요. 24시간 내 응답해주세요.`,
+      }));
+
+    console.log('[VOTE] 알림 대상:', notifTargets);
+
+    if (notifTargets.length > 0) {
+      const { error: notifError } = await supabase.from('notifications').insert(notifTargets);
+      console.log('[VOTE] 알림 전송 결과:', notifError || '성공');
+    } else {
+      console.log('[VOTE] 알림 보낼 대상 없음');
+    }
+
+    console.log('[VOTE] 완료');
+  };
+
+  // 참여자 강퇴
+  const handleKick = async () => {
+    if (!kickTarget) return;
+    await supabase.from('challenge_members')
+      .delete()
+      .eq('challenge_id', id)
+      .eq('user_id', kickTarget.user_id);
+
+    // 강퇴 알림
+    await supabase.from('notifications').insert({
+      user_id:      kickTarget.user_id,
+      challenge_id: id,
+      type:         'kicked',
+      message:      `'${challenge.title}' 챌린지에서 강퇴되었어요.`,
+    });
+
+    setMembers((prev) => prev.filter((m) => m.user_id !== kickTarget.user_id));
+    setKickTarget(null);
   };
 
   // 완주 전 마감 투표 취소
@@ -131,10 +191,19 @@ export default function ChallengeManage() {
   // 완주 전 마감 확정
   const handleConfirmClose = async () => {
     await supabase.from('challenges').update({
-      status: 'early_closed',
+      status:             'early_closed',
       early_close_active: false,
     }).eq('id', id);
-    navigate('/profile');
+
+    // localStorage에서도 제거
+    try {
+      const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      localStorage.setItem('my_challenges', JSON.stringify(
+        all.filter((c) => String(c.id) !== String(id))
+      ));
+    } catch {}
+
+    navigate('/home');
   };
 
   return (
@@ -200,10 +269,18 @@ export default function ChallengeManage() {
                     )}
                   </div>
                 </div>
-                {m.certifiedToday
-                  ? <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#10B981', background: '#D1FAE5', padding: '3px 10px', borderRadius: '20px' }}>✓ 인증완료</span>
-                  : <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--text-muted)', background: '#F3F4F6', padding: '3px 10px', borderRadius: '20px' }}>미인증</span>
-                }
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {m.certifiedToday
+                    ? <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#10B981', background: '#D1FAE5', padding: '3px 10px', borderRadius: '20px' }}>✓ 인증완료</span>
+                    : <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--text-muted)', background: '#F3F4F6', padding: '3px 10px', borderRadius: '20px' }}>미인증</span>
+                  }
+                  {m.role !== 'owner' && (
+                    <button onClick={() => setKickTarget({ user_id: m.user_id, nickname: m.profiles?.nickname || '익명' })}
+                      style={{ fontSize: '11px', color: '#EF4444', background: '#FEF2F2', border: '1px solid #FFD4C8', borderRadius: '20px', padding: '3px 8px', cursor: 'pointer', fontWeight: 'bold' }}>
+                      강퇴
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}
@@ -252,7 +329,7 @@ export default function ChallengeManage() {
         </div>
 
         {/* 챌린지 중지 요청 */}
-        <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: `1px solid ${challenge.early_close_active ? '#EF4444' : '#FFD4C8'}` }}>
+        <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: `1px solid ${voteActive ? '#EF4444' : '#FFD4C8'}` }}>
           <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px', color: '#EF4444' }}>
             <AlertTriangle size={16} color="#EF4444" /> 챌린지 중지 요청
           </h3>
@@ -260,7 +337,7 @@ export default function ChallengeManage() {
             참여자 75% 이상 동의 시 중지 가능 · 보증금 100% 반환
           </p>
 
-          {challenge.early_close_active ? (
+          {voteActive ? (
             <>
               {/* 카운트다운 */}
               <div style={{ background: '#FEF2F2', border: '1px solid #FFD4C8', borderRadius: '12px', padding: '16px', textAlign: 'center', marginBottom: '16px' }}>
@@ -323,6 +400,33 @@ export default function ChallengeManage() {
           )}
         </div>
       </div>
+
+      {/* 강퇴 확인 모달 */}
+      {kickTarget && (
+        <div onClick={() => setKickTarget(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: '480px', background: 'white', borderRadius: '20px 20px 0 0', padding: '28px 24px 40px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div style={{ fontSize: '40px', marginBottom: '12px' }}>⚠️</div>
+              <h3 style={{ fontSize: '17px', fontWeight: 'bold', marginBottom: '8px' }}>
+                {kickTarget.nickname}님을 강퇴할까요?
+              </h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                강퇴된 참여자는 챌린지에서 제외되며<br />해당 참여자에게 알림이 전송됩니다.
+              </p>
+            </div>
+            <button onClick={handleKick}
+              style={{ width: '100%', padding: '15px', background: '#EF4444', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '10px' }}>
+              강퇴하기
+            </button>
+            <button onClick={() => setKickTarget(null)}
+              style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+              취소
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
