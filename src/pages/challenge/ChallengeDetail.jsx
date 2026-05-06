@@ -54,19 +54,103 @@ export default function ChallengeDetail() {
     fetchChallenge();
   }, [id]);
 
-  const memberStatus = getMemberStatus(challenge?.members || 0, challenge?.maxMembers || 30);
+  const [alreadyJoined,  setAlreadyJoined]  = useState(false);
+  const [wasKicked,      setWasKicked]      = useState(false);
+  const [currentMembers, setCurrentMembers] = useState(0);
 
-  // 이미 참가 중인지 확인
-  const alreadyJoined = useMemo(() => {
+  useEffect(() => {
+    const checkMembership = async () => {
+      const profileId = await getProfileId();
+      const { data } = await supabase
+        .from('challenge_members')
+        .select('user_id, status, role')
+        .eq('challenge_id', id);
+
+      const active = (data || []).filter(
+        (m) => m.status !== 'observer' && m.status !== 'kicked'
+      );
+      setCurrentMembers(active.length);
+
+      if (profileId) {
+        const mine = (data || []).find((m) => m.user_id === profileId);
+        if (mine?.status === 'kicked') {
+          setWasKicked(true);
+          setAlreadyJoined(false);
+        } else {
+          setAlreadyJoined(!!mine);
+        }
+      }
+    };
     try {
       const saved = JSON.parse(localStorage.getItem('my_challenges') || '[]');
-      return saved.some((c) => String(c.id) === String(id));
-    } catch { return false; }
+      if (saved.some((c) => String(c.id) === String(id))) setAlreadyJoined(true);
+    } catch {}
+    checkMembership();
+
+    // 강퇴 실시간 감지 — 페이지 열어둔 채로 강퇴 당해도 즉시 반영
+    let myPid = null;
+    getProfileId().then((pid) => { myPid = pid; });
+
+    const kickChannel = supabase
+      .channel(`detail_kick_${id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'challenge_members',
+        filter: `challenge_id=eq.${id}`,
+      }, (payload) => {
+        if (payload.new.user_id === myPid && payload.new.status === 'kicked') {
+          setWasKicked(true);
+          setAlreadyJoined(false);
+          try {
+            const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+            localStorage.setItem('my_challenges', JSON.stringify(
+              all.filter((c) => String(c.id) !== String(id))
+            ));
+          } catch {}
+        }
+      })
+      .subscribe();
+
+    return () => supabase.removeChannel(kickChannel);
   }, [id]);
+
+  const memberStatus = getMemberStatus(currentMembers, challenge?.maxMembers || 30);
 
   const handlePay = () => {
     setPaying(true);
     setTimeout(async () => {
+      // 강퇴 여부 재확인 (서버 기준)
+      const profileId = await getProfileId();
+      if (profileId) {
+        const { data: myRow } = await supabase
+          .from('challenge_members')
+          .select('status')
+          .eq('challenge_id', id)
+          .eq('user_id', profileId)
+          .single();
+        if (myRow?.status === 'kicked') {
+          setPaying(false);
+          setShowDepositModal(false);
+          setWasKicked(true);
+          return;
+        }
+      }
+
+      // 실시간 인원 재확인 (동시 참여 방지)
+      const { count } = await supabase
+        .from('challenge_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('challenge_id', id)
+        .not('status', 'in', '(observer,kicked)');
+
+      const maxM = challenge.max_members || challenge.maxMembers || 30;
+      if (count >= maxM) {
+        setPaying(false);
+        setShowDepositModal(false);
+        alert('참여 인원이 가득 찼어요.');
+        setCurrentMembers(count);
+        return;
+      }
+
       const daysTotal  = parseInt(challenge.duration) || 30;
       const todayStr   = new Date().toISOString().split('T')[0];
       const endDateStr = (() => {
@@ -153,7 +237,7 @@ export default function ChallengeDetail() {
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Clock size={16} /> {typeof challenge.duration === 'number' ? `${challenge.duration}일` : challenge.duration}
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Users size={16} /> {challenge.members}/{challenge.maxMembers}명</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Users size={16} /> {currentMembers}/{challenge.maxMembers || challenge.max_members}명</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <ShieldCheck size={16} /> {CERTIFY_LABEL[challenge.certifyType] || challenge.certifyType}
             </span>
@@ -198,7 +282,11 @@ export default function ChallengeDetail() {
 
       {/* 하단 고정 CTA — nav-height 위에 위치 */}
       <div style={{ position: 'fixed', bottom: 'var(--nav-height)', left: 0, right: 0, padding: '12px 20px', background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-color)', maxWidth: '480px', margin: '0 auto' }}>
-        {alreadyJoined ? (
+        {wasKicked ? (
+          <div style={{ padding: '16px', background: '#FEF2F2', border: '1px solid #FFD4C8', borderRadius: '12px', textAlign: 'center', color: '#EF4444', fontWeight: 'bold', fontSize: '15px' }}>
+            🚫 강퇴 당한 챌린지입니다.
+          </div>
+        ) : alreadyJoined ? (
           <button onClick={() => navigate(`/feed/${id}`)}
             style={{ width: '100%', padding: '16px', background: 'var(--secondary)', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>
             그룹 피드 보러 가기
@@ -209,10 +297,10 @@ export default function ChallengeDetail() {
               참여 시 보증금 <strong style={{ color: 'var(--primary)' }}>{challenge.deposit?.toLocaleString()}원</strong> 결제 후 합류
             </div>
             <button
-              onClick={() => challenge.members >= challenge.maxMembers ? null : setShowDepositModal(true)}
-              disabled={challenge.members >= challenge.maxMembers}
-              style={{ width: '100%', padding: '16px', background: challenge.members >= challenge.maxMembers ? '#E5E7EB' : 'var(--primary)', color: challenge.members >= challenge.maxMembers ? 'var(--text-muted)' : 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: challenge.members >= challenge.maxMembers ? 'not-allowed' : 'pointer' }}>
-              {challenge.members >= challenge.maxMembers ? '멤버 마감' : '보증금 납부하고 참여하기'}
+              onClick={() => currentMembers >= (challenge.max_members || challenge.maxMembers) ? null : setShowDepositModal(true)}
+              disabled={currentMembers >= (challenge.max_members || challenge.maxMembers)}
+              style={{ width: '100%', padding: '16px', background: currentMembers >= (challenge.max_members || challenge.maxMembers) ? '#E5E7EB' : 'var(--primary)', color: currentMembers >= (challenge.max_members || challenge.maxMembers) ? 'var(--text-muted)' : 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: currentMembers >= (challenge.max_members || challenge.maxMembers) ? 'not-allowed' : 'pointer' }}>
+              {currentMembers >= (challenge.max_members || challenge.maxMembers) ? '멤버 마감' : '보증금 납부하고 참여하기'}
             </button>
           </>
         )}

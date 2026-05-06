@@ -74,8 +74,10 @@ export default function ChallengeManage() {
   );
 
   const participantMembers = members.filter((m) =>
-    m.role === 'member' ||
-    (m.role === 'owner' && challenge.owner_participates && m.status !== 'observer')
+    m.status !== 'kicked' && (
+      m.role === 'member' ||
+      (m.role === 'owner' && challenge.owner_participates && m.status !== 'observer')
+    )
   );
   const memberCount = participantMembers.length;
   const maxMembers         = challenge.max_members || 30;
@@ -164,8 +166,10 @@ export default function ChallengeManage() {
   // 참여자 강퇴
   const handleKick = async () => {
     if (!kickTarget) return;
-    await supabase.from('challenge_members')
-      .delete()
+
+    await supabase
+      .from('challenge_members')
+      .update({ status: 'kicked' })
       .eq('challenge_id', id)
       .eq('user_id', kickTarget.user_id);
 
@@ -177,7 +181,9 @@ export default function ChallengeManage() {
       message:      `'${challenge.title}' 챌린지에서 강퇴되었어요.`,
     });
 
-    setMembers((prev) => prev.filter((m) => m.user_id !== kickTarget.user_id));
+    setMembers((prev) => prev.map((m) =>
+      m.user_id === kickTarget.user_id ? { ...m, status: 'kicked' } : m
+    ));
     setKickTarget(null);
   };
 
@@ -194,6 +200,19 @@ export default function ChallengeManage() {
       status:             'early_closed',
       early_close_active: false,
     }).eq('id', id);
+
+    // 전체 활성 멤버에게 종료 알림 전송
+    const notifTargets = members
+      .filter((m) => m.status !== 'kicked' && m.user_id !== myProfileId)
+      .map((m) => ({
+        user_id:      m.user_id,
+        challenge_id: id,
+        type:         'challenge_closed',
+        message:      `'${challenge.title}' 챌린지가 중지 동의로 종료되었어요. 보증금이 전액 반환됩니다.`,
+      }));
+    if (notifTargets.length > 0) {
+      await supabase.from('notifications').insert(notifTargets);
+    }
 
     // localStorage에서도 제거
     try {

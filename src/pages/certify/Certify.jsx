@@ -15,6 +15,7 @@ export default function Certify() {
 
   const [allowedType,    setAllowedType]    = useState(null);
   const [activeTab,      setActiveTab]      = useState('photo');
+  const [isKicked,       setIsKicked]       = useState(false);
   const [photoPreview,   setPhotoPreview]   = useState(null);
   const [photoBase64,    setPhotoBase64]    = useState(null);
   const [textValue,      setTextValue]      = useState('');
@@ -22,6 +23,22 @@ export default function Certify() {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const galleryInputRef = useRef(null);
   const cameraInputRef  = useRef(null);
+
+  // 강퇴 여부 확인
+  useEffect(() => {
+    const checkKicked = async () => {
+      const profileId = await getProfileId();
+      if (!profileId) return;
+      const { data } = await supabase
+        .from('challenge_members')
+        .select('status')
+        .eq('challenge_id', id)
+        .eq('user_id', profileId)
+        .single();
+      if (data?.status === 'kicked') setIsKicked(true);
+    };
+    checkKicked();
+  }, [id]);
 
   // Supabase에서 인증 방식 fetch
   useEffect(() => {
@@ -126,6 +143,18 @@ export default function Certify() {
 
   /* allowedType이 있으면 해당 탭 하나만, 없으면 전체 */
   const visibleTabs = allowedType ? ALL_TABS.filter((t) => t.id === allowedType) : ALL_TABS;
+
+  if (isKicked) return (
+    <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
+      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🚫</div>
+      <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>접근 불가</h2>
+      <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '24px' }}>강퇴 당한 챌린지입니다.</p>
+      <button onClick={() => navigate('/home')}
+        style={{ padding: '12px 28px', background: 'var(--primary)', color: 'white', borderRadius: '12px', border: 'none', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer' }}>
+        홈으로 돌아가기
+      </button>
+    </div>
+  );
 
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>

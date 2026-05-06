@@ -31,20 +31,13 @@ export default function Notifications() {
 
     const fetchNotifs = async () => {
       const profileId = await getProfileId();
-      console.log('[NOTIF] profileId:', profileId);
-      if (!profileId) {
-        console.log('[NOTIF] profileId 없음 → 프로필이 Supabase에 없어요');
-        setLoading(false);
-        return;
-      }
+      if (!profileId) { setLoading(false); return; }
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('notifications')
         .select('*')
         .eq('user_id', profileId)
         .order('created_at', { ascending: false });
-
-      console.log('[NOTIF] 조회 결과:', { data, error });
 
       setNotifs(data || []);
       setLoading(false);

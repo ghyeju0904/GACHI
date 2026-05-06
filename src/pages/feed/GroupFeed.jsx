@@ -81,9 +81,30 @@ export default function GroupFeed() {
       }, () => { fetchCloseVotes(); })
       .subscribe();
 
+    // 강퇴 실시간 감지
+    const kickChannel = supabase
+      .channel(`kick_check_${id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'challenge_members',
+        filter: `challenge_id=eq.${id}`,
+      }, async (payload) => {
+        const profileId = await getProfileId();
+        if (payload.new.user_id === profileId && payload.new.status === 'kicked') {
+          try {
+            const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+            localStorage.setItem('my_challenges', JSON.stringify(
+              all.filter((c) => String(c.id) !== String(id))
+            ));
+          } catch {}
+          navigate('/home');
+        }
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(challengeChannel);
       supabase.removeChannel(votesChannel);
+      supabase.removeChannel(kickChannel);
     };
   }, [id]);
 
@@ -154,10 +175,28 @@ export default function GroupFeed() {
 
       const active = (memberData || []).filter((m) => m.status !== 'observer');
       setTotalMembers(active.length);
-      setIsOwner(
+
+      const isOwnerUser =
         (memberData || []).some((m) => m.user_id === profileId && m.role === 'owner') ||
-        chData?.created_by === profileId
-      );
+        chData?.created_by === profileId;
+      setIsOwner(isOwnerUser);
+
+      // 강퇴된 멤버 또는 비멤버 접근 차단
+      if (profileId) {
+        const myEntry = (memberData || []).find((m) => m.user_id === profileId);
+        const isKicked = myEntry?.status === 'kicked';
+        const isMember = !!myEntry && !isKicked;
+        if (!isOwnerUser && !isMember) {
+          try {
+            const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+            localStorage.setItem('my_challenges', JSON.stringify(
+              all.filter((c) => String(c.id) !== String(id))
+            ));
+          } catch {}
+          navigate('/home');
+          return;
+        }
+      }
     };
     fetchFeed();
   }, [id]);
