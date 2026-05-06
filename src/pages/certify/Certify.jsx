@@ -3,6 +3,7 @@ import { ArrowLeft, Camera, CheckSquare, Edit3, Image, X, CheckCircle, ShieldChe
 import { useNavigate, useParams } from 'react-router-dom';
 import { logEvent } from '../../services/logger';
 import { supabase } from '../../services/supabase';
+import { getProfileId } from '../../utils/getProfileId';
 
 const KEY_TO_LABEL = { photo: '사진 인증', text: '텍스트 인증', check: '체크인' };
 
@@ -67,8 +68,8 @@ export default function Certify() {
     e.target.value = '';
   };
 
-  const handleUpload = () => {
-    // 인증 날짜 기록
+  const handleUpload = async () => {
+    // 1. 인증 날짜 로컬 기록
     const certData = JSON.parse(localStorage.getItem('certified_by_challenge') || '{}');
     if (!certData[id]) certData[id] = [];
     if (!certData[id].includes(today)) certData[id].push(today);
@@ -79,43 +80,38 @@ export default function Certify() {
       localStorage.setItem('certified_dates', JSON.stringify([...dates, today]));
     }
 
-    // 피드 포스트 저장
-    const prof     = (() => { try { return JSON.parse(localStorage.getItem('profile') || 'null'); } catch { return null; } })();
-    const username = prof?.nickname || '나';
-    const avatar   = prof?.avatar   || '🐰';
-
-    const comment = commentValue.trim();
-    const defaultContent =
-      activeTab === 'photo' ? '📸 사진으로 인증했어요!' :
-      activeTab === 'text'  ? (textValue.trim() || '✍️ 텍스트로 인증했어요!') :
-                              '✅ 체크인으로 인증했어요!';
-
-    const newPost = {
-      id:        Date.now(),
-      username,
-      avatar,
-      createdAt: new Date().toISOString(),
-      type:      activeTab,
-      photoData: activeTab === 'photo' ? (photoBase64 || null) : null,
-      textBody:  activeTab === 'text'  ? textValue.trim() : null,
-      content:   comment || defaultContent,
-      approve:   0,
-      reject:    0,
-      myVote:    null,
-      isMyPost:  true,
-    };
-
+    // 2. Supabase에 인증 저장 (모든 유저 공유)
     try {
-      const allPosts = JSON.parse(localStorage.getItem('feed_posts') || '{}');
-      allPosts[id]   = [newPost, ...(allPosts[id] || [])];
-      localStorage.setItem('feed_posts', JSON.stringify(allPosts));
-    } catch {
-      // 용량 초과 시 사진 데이터 제외 후 재시도
-      try {
-        const allPosts = JSON.parse(localStorage.getItem('feed_posts') || '{}');
-        allPosts[id]   = [{ ...newPost, photoData: null }, ...(allPosts[id] || [])];
-        localStorage.setItem('feed_posts', JSON.stringify(allPosts));
-      } catch {}
+      const profileId = await getProfileId();
+      if (profileId) {
+        let photoUrl = null;
+
+        // 사진 → Supabase Storage 업로드
+        if (activeTab === 'photo' && photoBase64) {
+          const blob     = await fetch(photoBase64).then((r) => r.blob());
+          const fileName = `${id}/${profileId}/${today}.jpg`;
+          const { data: uploadData } = await supabase.storage
+            .from('cert-photos')
+            .upload(fileName, blob, { upsert: true, contentType: 'image/jpeg' });
+          if (uploadData) {
+            const { data: urlData } = supabase.storage
+              .from('cert-photos')
+              .getPublicUrl(fileName);
+            photoUrl = urlData.publicUrl;
+          }
+        }
+
+        await supabase.from('certifications').upsert({
+          challenge_id: id,
+          user_id:      profileId,
+          cert_date:    today,
+          type:         activeTab,
+          content:      activeTab === 'text' ? textValue.trim() : (commentValue.trim() || null),
+          photo_url:    photoUrl,
+        }, { onConflict: 'challenge_id,user_id,cert_date' });
+      }
+    } catch (e) {
+      console.error('인증 저장 실패:', e);
     }
 
     logEvent('certification_submit', `/certify/${id}`, { challenge_id: id, type: activeTab });

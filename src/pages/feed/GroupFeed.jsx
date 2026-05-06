@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut } from 'lucide-react';
 import { logEvent } from '../../services/logger';
 import { supabase } from '../../services/supabase';
+import { getProfileId } from '../../utils/getProfileId';
 import { useNavigate, useParams } from 'react-router-dom';
 
 function getRelativeTime(isoStr) {
@@ -69,45 +70,86 @@ export default function GroupFeed() {
     navigate('/home');
   };
 
-  const [posts, setPosts] = useState(() => {
-    const myPosts = (() => {
-      try {
-        const allPosts = JSON.parse(localStorage.getItem('feed_posts') || '{}');
-        return (allPosts[id] || []).map((p) => ({ ...p, time: getRelativeTime(p.createdAt) }));
-      } catch { return []; }
-    })();
-    return [...myPosts];
-  });
+  const [posts,        setPosts]        = useState([]);
+  const [totalMembers, setTotalMembers] = useState(0);
+  const [myProfileId,  setMyProfileId]  = useState(null);
 
-  const totalMembers = 12;
+  useEffect(() => {
+    const fetchFeed = async () => {
+      const profileId = await getProfileId();
+      setMyProfileId(profileId);
 
-  const handleVote = (postId, voteType) => {
-    setPosts((prev) =>
-      prev.map((post) => {
-        if (post.id !== postId) return post;
-        const prev_vote = post.myVote;
-        if (prev_vote === voteType) {
-          // 같은 투표 다시 누르면 취소
-          return {
-            ...post,
-            myVote: null,
-            approve: voteType === 'approve' ? post.approve - 1 : post.approve,
-            reject: voteType === 'reject' ? post.reject - 1 : post.reject,
-          };
-        }
-        // 이전 투표 취소 후 새 투표 반영
-        return {
-          ...post,
-          myVote: voteType,
-          approve: voteType === 'approve'
-            ? post.approve + 1
-            : prev_vote === 'approve' ? post.approve - 1 : post.approve,
-          reject: voteType === 'reject'
-            ? post.reject + 1
-            : prev_vote === 'reject' ? post.reject - 1 : post.reject,
-        };
-      })
-    );
+      // 인증 피드 (전체 유저)
+      const { data: certData } = await supabase
+        .from('certifications')
+        .select(`*, profiles (avatar, nickname), certification_votes (voter_id, vote)`)
+        .eq('challenge_id', id)
+        .order('created_at', { ascending: false });
+
+      if (certData) {
+        setPosts(certData.map((cert) => ({
+          id:        cert.id,
+          certId:    cert.id,
+          username:  cert.profiles?.nickname || '익명',
+          avatar:    cert.profiles?.avatar   || '🐰',
+          time:      getRelativeTime(cert.created_at),
+          type:      cert.type,
+          photoData: cert.photo_url,
+          textBody:  cert.type === 'text' ? cert.content : null,
+          content:   cert.content,
+          approve:   cert.certification_votes?.filter((v) => v.vote === 'approve').length || 0,
+          reject:    cert.certification_votes?.filter((v) => v.vote === 'reject').length  || 0,
+          myVote:    cert.certification_votes?.find((v) => v.voter_id === profileId)?.vote || null,
+          isMyPost:  cert.user_id === profileId,
+        })));
+      }
+
+      // 참여자 수
+      const { count } = await supabase
+        .from('challenge_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('challenge_id', id);
+      setTotalMembers(count || 0);
+    };
+    fetchFeed();
+  }, [id]);
+
+  const handleVote = async (postId, voteType) => {
+    const post = posts.find((p) => p.id === postId);
+    if (!post || !myProfileId) return;
+
+    const isSame = post.myVote === voteType;
+
+    // 낙관적 UI 업데이트
+    setPosts((prev) => prev.map((p) => {
+      if (p.id !== postId) return p;
+      if (isSame) return {
+        ...p, myVote: null,
+        approve: voteType === 'approve' ? p.approve - 1 : p.approve,
+        reject:  voteType === 'reject'  ? p.reject  - 1 : p.reject,
+      };
+      return {
+        ...p, myVote: voteType,
+        approve: voteType === 'approve' ? p.approve + 1 : (p.myVote === 'approve' ? p.approve - 1 : p.approve),
+        reject:  voteType === 'reject'  ? p.reject  + 1 : (p.myVote === 'reject'  ? p.reject  - 1 : p.reject),
+      };
+    }));
+
+    // Supabase 저장
+    try {
+      if (isSame) {
+        await supabase.from('certification_votes')
+          .delete()
+          .eq('certification_id', post.certId)
+          .eq('voter_id', myProfileId);
+      } else {
+        await supabase.from('certification_votes').upsert({
+          certification_id: post.certId,
+          voter_id:         myProfileId,
+          vote:             voteType,
+        }, { onConflict: 'certification_id,voter_id' });
+      }
+    } catch {}
   };
 
   const getVoteStatus = (post) => {
