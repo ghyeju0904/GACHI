@@ -164,18 +164,32 @@ export default function Home() {
   const openGiveUp = (ch) => { setGiveUpModal(ch); setGiveUpStep(1); };
   const closeGiveUp = () => setGiveUpModal(null);
 
-  const handleConfirmGiveUp = () => {
+  const handleConfirmGiveUp = async () => {
     if (!giveUpModal) return;
     const challengeId = String(giveUpModal.id);
+
+    // localStorage 업데이트
     try {
       const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
       localStorage.setItem('my_challenges', JSON.stringify(all.filter((c) => String(c.id) !== challengeId)));
       const prev = JSON.parse(localStorage.getItem('given_up_challenges') || '[]');
       localStorage.setItem('given_up_challenges', JSON.stringify([...new Set([...prev.map(String), challengeId])]));
     } catch {}
+
+    // Supabase challenge_members 업데이트
+    try {
+      const profileId = await getProfileId();
+      if (profileId) {
+        await supabase.from('challenge_members')
+          .update({ status: 'gave_up', gave_up_at: new Date().toISOString() })
+          .eq('challenge_id', challengeId)
+          .eq('user_id', profileId);
+      }
+    } catch {}
+
     setJoinedFromLS((prev) => prev.filter((c) => String(c.id) !== challengeId));
     setGivenUpIds((prev) => new Set([...prev, challengeId]));
-    logEvent('challenge_give_up', `/home`, { challenge_id: challengeId, deposit: giveUpModal?.deposit });
+    logEvent('challenge_give_up', '/home', { challenge_id: challengeId, deposit: giveUpModal?.deposit });
     closeGiveUp();
   };
 

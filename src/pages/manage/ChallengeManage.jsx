@@ -143,7 +143,7 @@ export default function ChallengeManage() {
     console.log('[VOTE] myProfileId:', myProfileId);
 
     const notifTargets = members
-      .filter((m) => m.user_id !== myProfileId)
+      .filter((m) => m.user_id !== myProfileId && m.status !== 'kicked')
       .map((m) => ({
         user_id:      m.user_id,
         challenge_id: id,

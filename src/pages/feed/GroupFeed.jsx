@@ -121,13 +121,26 @@ export default function GroupFeed() {
   const openGiveUp  = () => { setGiveUpModal(true); setGiveUpStep(1); };
   const closeGiveUp = () => setGiveUpModal(false);
 
-  const handleConfirmGiveUp = () => {
+  const handleConfirmGiveUp = async () => {
+    // localStorage 업데이트
     try {
       const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
       localStorage.setItem('my_challenges', JSON.stringify(all.filter((c) => String(c.id) !== String(id))));
       const prev = JSON.parse(localStorage.getItem('given_up_challenges') || '[]');
       localStorage.setItem('given_up_challenges', JSON.stringify([...new Set([...prev.map(String), String(id)])]));
     } catch {}
+
+    // Supabase challenge_members 업데이트
+    try {
+      const profileId = await getProfileId();
+      if (profileId) {
+        await supabase.from('challenge_members')
+          .update({ status: 'gave_up', gave_up_at: new Date().toISOString() })
+          .eq('challenge_id', id)
+          .eq('user_id', profileId);
+      }
+    } catch {}
+
     logEvent('challenge_give_up', `/feed/${id}`, { challenge_id: id });
     navigate('/home');
   };
