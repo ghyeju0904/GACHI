@@ -1,26 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Bell, Flame, ChevronRight, ChevronDown, ChevronUp, Search, Users, Wallet } from 'lucide-react';
+import { Bell, Flame, ChevronRight, ChevronDown, ChevronUp, Search, Users, Wallet, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../services/supabase';
+import { logEvent } from '../../services/logger';
 
-const ALL_CHALLENGES = [
-  { id: 1,  title: '새벽 5시 기상 루틴 21일',     category: '미라클모닝', members: 8,  maxMembers: 15, deposit: 10000 },
-  { id: 2,  title: '매일 아침 6시 전 일어나기',     category: '미라클모닝', members: 12, maxMembers: 20, deposit: 5000  },
-  { id: 3,  title: '하루 30분 홈트레이닝',          category: '운동',       members: 20, maxMembers: 30, deposit: 20000 },
-  { id: 4,  title: '매일 만보 걷기 30일',           category: '운동',       members: 6,  maxMembers: 10, deposit: 10000 },
-  { id: 5,  title: '매일 1시간 집중 공부',          category: '스터디',     members: 9,  maxMembers: 15, deposit: 15000 },
-  { id: 6,  title: '자격증 합격 30일 스터디',       category: '스터디',     members: 5,  maxMembers: 10, deposit: 30000 },
-  { id: 7,  title: '하루 1시간 바이브코딩',         category: '바이브코딩', members: 14, maxMembers: 20, deposit: 10000 },
-  { id: 8,  title: '사이드 프로젝트 30일 완성',     category: '바이브코딩', members: 7,  maxMembers: 10, deposit: 20000 },
-  { id: 9,  title: '하루 30분 독서 습관',           category: '독서',       members: 11, maxMembers: 20, deposit: 5000  },
-  { id: 10, title: '다이어트 식단 21일 기록',       category: '다이어트',   members: 18, maxMembers: 30, deposit: 15000 },
-  { id: 11, title: '매일 명상 10분',                category: '명상',       members: 6,  maxMembers: 15, deposit: 5000  },
-  { id: 12, title: '영어 단어 20개 암기 30일',      category: '외국어',     members: 8,  maxMembers: 20, deposit: 10000 },
-];
-
-const JOINED_DUMMY = [
-  { id: 7, title: '하루 1시간 바이브코딩', category: '바이브코딩', dDay: 14, streak: 5,  deposit: 10000, role: 'member' },
-  { id: 5, title: '매일 1시간 집중 공부',  category: '스터디',     dDay: 22, streak: 12, deposit: 15000, role: 'member' },
-];
 
 function getMemberStatus(members, maxMembers) {
   const ratio = members / maxMembers;
@@ -38,6 +21,8 @@ export default function Home() {
     catch { return []; }
   }, []);
 
+  const [allChallenges,   setAllChallenges]   = useState([]);
+  const [loadingChallenges, setLoadingChallenges] = useState(true);
   const [certByChallenge, setCertByChallenge] = useState({});
   const [ownedChallenges, setOwnedChallenges] = useState([]);
   const [joinedFromLS,    setJoinedFromLS]    = useState([]);
@@ -45,7 +30,42 @@ export default function Home() {
   const [mySubTab,        setMySubTab]        = useState('owned');  // owned | joined
   const [searchQuery,     setSearchQuery]     = useState('');
   const [activeTab,       setActiveTab]       = useState('추천');
+  const [giveUpModal,     setGiveUpModal]     = useState(null);
+  const [giveUpStep,      setGiveUpStep]      = useState(1);
+  const [givenUpIds,      setGivenUpIds]      = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('given_up_challenges') || '[]').map(String)); }
+    catch { return new Set(); }
+  });
 
+  // Supabase에서 챌린지 목록 fetch
+  useEffect(() => {
+    const fetchChallenges = async () => {
+      const { data, error } = await supabase
+        .from('challenges')
+        .select('*')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
+
+      console.log('challenges fetch →', { data, error });
+      if (!error && data) {
+        setAllChallenges(data.map((ch) => ({
+          ...ch,
+          maxMembers:  ch.max_members,
+          certifyType: ch.certify_type,
+          members:     0,
+        })));
+      }
+      setLoadingChallenges(false);
+    };
+    fetchChallenges();
+  }, []);
+
+  // 홈 진입 로그
+  useEffect(() => {
+    logEvent('page_view', '/home');
+  }, []);
+
+  // localStorage에서 내 챌린지 / 인증 데이터 로드
   useEffect(() => {
     try { setCertByChallenge(JSON.parse(localStorage.getItem('certified_by_challenge') || '{}')); } catch {}
     try {
@@ -57,13 +77,27 @@ export default function Home() {
 
   const isCertifiedToday = (id) => (certByChallenge[String(id)] || []).includes(todayStr);
 
-  // 참여 중 = localStorage member + JOINED_DUMMY (중복 제거)
+  const openGiveUp = (ch) => { setGiveUpModal(ch); setGiveUpStep(1); };
+  const closeGiveUp = () => setGiveUpModal(null);
+
+  const handleConfirmGiveUp = () => {
+    if (!giveUpModal) return;
+    const challengeId = String(giveUpModal.id);
+    try {
+      const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      localStorage.setItem('my_challenges', JSON.stringify(all.filter((c) => String(c.id) !== challengeId)));
+      const prev = JSON.parse(localStorage.getItem('given_up_challenges') || '[]');
+      localStorage.setItem('given_up_challenges', JSON.stringify([...new Set([...prev.map(String), challengeId])]));
+    } catch {}
+    setJoinedFromLS((prev) => prev.filter((c) => String(c.id) !== challengeId));
+    setGivenUpIds((prev) => new Set([...prev, challengeId]));
+    closeGiveUp();
+  };
+
+  // 참여 중 = localStorage member 전체 (포기한 챌린지 제외)
   const joinedChallenges = useMemo(() => {
-    const fromLS = joinedFromLS.map((c) => ({ ...c, fromLS: true }));
-    const dummyIds = new Set(fromLS.map((c) => String(c.id)));
-    const dummy = JOINED_DUMMY.filter((c) => !dummyIds.has(String(c.id)));
-    return [...fromLS, ...dummy];
-  }, [joinedFromLS]);
+    return joinedFromLS.filter((c) => !givenUpIds.has(String(c.id)));
+  }, [joinedFromLS, givenUpIds]);
 
   const allMyChallenges = [...ownedChallenges, ...joinedChallenges];
   const pendingCount    = allMyChallenges.filter((c) => !isCertifiedToday(c.id)).length;
@@ -73,26 +107,28 @@ export default function Home() {
   // 사용자가 참여한 챌린지 ID Set (인원 카운트 +1용)
   const joinedIdsSet = useMemo(() => new Set(joinedFromLS.map((c) => String(c.id))), [joinedFromLS]);
 
-  // 검색: ALL_CHALLENGES + 내 챌린지(owned) 포함
+  // 검색: Supabase 챌린지 + 내가 개설한 챌린지(owned) 포함
   const searchableAll = useMemo(() => {
-    const map = new Map(ALL_CHALLENGES.map((c) => [String(c.id), c]));
+    const map = new Map(allChallenges.map((c) => [String(c.id), c]));
     ownedChallenges.forEach((c) => {
       if (!map.has(String(c.id))) {
         map.set(String(c.id), { id: c.id, title: c.title, category: c.category, members: 0, maxMembers: c.memberCount || 10, deposit: c.deposit || 0 });
       }
     });
     return [...map.values()];
-  }, [ownedChallenges]);
+  }, [allChallenges, ownedChallenges]);
 
   const displayedChallenges = useMemo(() => {
     if (searchQuery.trim()) {
       const q = searchQuery.trim();
       return searchableAll.filter((c) => c.title.includes(q) || c.category.includes(q));
     }
-    if (activeTab === '전체') return ALL_CHALLENGES;
-    if (activeTab === '추천') return interests.length ? ALL_CHALLENGES.filter((c) => interests.includes(c.category)) : ALL_CHALLENGES.slice(0, 6);
-    return ALL_CHALLENGES.filter((c) => c.category === activeTab);
-  }, [searchQuery, activeTab, interests, searchableAll]);
+    if (activeTab === '전체') return allChallenges;
+    if (activeTab === '추천') return interests.length
+      ? allChallenges.filter((c) => interests.includes(c.category))
+      : allChallenges.slice(0, 6);
+    return allChallenges.filter((c) => c.category === activeTab);
+  }, [searchQuery, activeTab, interests, searchableAll, allChallenges]);
 
   /* ── 내 챌린지 미니 탭 색상 ── */
   const SUB_TAB_STYLES = {
@@ -100,7 +136,7 @@ export default function Home() {
     joined: { active: { bg: 'var(--secondary)', color: 'white' }, inactive: { bg: '#E8E8F0', color: 'var(--secondary)' } },
   };
 
-  const MiniChallengeRow = ({ ch, isOwned }) => (
+  const MiniChallengeRow = ({ ch, isOwned, onGiveUp }) => (
     <div onClick={() => navigate(`/feed/${ch.id}`)}
       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 4px', borderBottom: '1px solid #F3F4F6', cursor: 'pointer' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -111,7 +147,7 @@ export default function Home() {
             : `D-${ch.dDay} · 🔥 ${ch.streak}일`}
         </div>
       </div>
-      <div style={{ marginLeft: '10px', flexShrink: 0 }}>
+      <div style={{ marginLeft: '10px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
         {isCertifiedToday(ch.id)
           ? <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#10B981', background: '#D1FAE5', padding: '3px 8px', borderRadius: '20px' }}>✓ 완료</span>
           : !isOwned
@@ -121,6 +157,12 @@ export default function Home() {
               </button>
             : <ChevronRight size={16} color="var(--text-muted)" />
         }
+        {!isOwned && (
+          <button onClick={(e) => { e.stopPropagation(); onGiveUp(ch); }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', opacity: 0.45 }}>
+            <LogOut size={14} color="var(--text-muted)" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -210,7 +252,7 @@ export default function Home() {
                 {mySubTab === 'joined' && (
                   joinedChallenges.length === 0
                     ? <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: '13px' }}>참여 중인 챌린지가 없어요</div>
-                    : joinedChallenges.map((ch) => <MiniChallengeRow key={ch.id} ch={ch} isOwned={false} />)
+                    : joinedChallenges.map((ch) => <MiniChallengeRow key={ch.id} ch={ch} isOwned={false} onGiveUp={openGiveUp} />)
                 )}
               </div>
             )}
@@ -244,7 +286,9 @@ export default function Home() {
             </>
           )}
 
-          {displayedChallenges.length === 0 ? (
+          {loadingChallenges ? (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '14px' }}>챌린지 불러오는 중...</div>
+          ) : displayedChallenges.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '14px' }}>검색 결과가 없어요</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -279,6 +323,60 @@ export default function Home() {
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
+
+      {/* 중도 포기 모달 */}
+      {giveUpModal && (
+        <div onClick={closeGiveUp}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: '480px', background: 'white', borderRadius: '20px 20px 0 0', padding: '28px 24px 40px' }}>
+
+            {giveUpStep === 1 ? (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <div style={{ fontSize: '52px', marginBottom: '14px' }}>🔥</div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: 'var(--text-main)' }}>포기하기 전에 잠깐만요!</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+                    챌린지 완주까지 앞으로<br />
+                    <strong style={{ fontSize: '20px', color: 'var(--primary)' }}>D-{giveUpModal.dDay}</strong>일 남았어요.<br />
+                    여기서 멈추기엔 너무 아깝잖아요.<br />
+                    우리 좀 더 같이 달려봐요! 💪
+                  </p>
+                </div>
+                <button onClick={closeGiveUp}
+                  style={{ width: '100%', padding: '15px', background: 'var(--primary)', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '10px' }}>
+                  계속 도전할게요! 💪
+                </button>
+                <button onClick={() => setGiveUpStep(2)}
+                  style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+                  그래도 포기할게요
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <div style={{ fontSize: '52px', marginBottom: '14px' }}>⚠️</div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: '#EF4444' }}>중도 포기 = 실패 처리</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+                    중도 포기는 챌린지 실패와 동일하게 처리돼요.<br />
+                    납부하신 보증금{' '}
+                    <strong style={{ color: '#EF4444' }}>{giveUpModal.deposit?.toLocaleString() ?? 0}원</strong>은<br />
+                    <strong>반환되지 않습니다.</strong>
+                  </p>
+                </div>
+                <button onClick={handleConfirmGiveUp}
+                  style={{ width: '100%', padding: '15px', background: '#EF4444', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '10px' }}>
+                  포기하기
+                </button>
+                <button onClick={() => setGiveUpStep(1)}
+                  style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+                  돌아가기
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

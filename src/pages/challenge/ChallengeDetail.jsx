@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ArrowLeft, Users, Clock, Flame, Wallet, ShieldCheck, X, CheckCircle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { logEvent } from '../../services/logger';
 
 const ALL_CHALLENGES = [
   { id: 1,  title: '새벽 5시 기상 루틴 21일',   category: '미라클모닝', duration: '21일', members: 8,  maxMembers: 15, deposit: 10000, certifyType: '사진 인증', description: '매일 새벽 5시에 기상하여 하루를 일찍 시작하는 습관을 만듭니다.' },
@@ -32,6 +33,10 @@ export default function ChallengeDetail() {
   const [paying,           setPaying]           = useState(false);
   const [paid,             setPaid]             = useState(false);
 
+  useEffect(() => {
+    logEvent('challenge_view', `/challenge/${id}`, { challenge_id: id });
+  }, [id]);
+
   const challenge = useMemo(() => {
     const found = ALL_CHALLENGES.find((c) => String(c.id) === String(id));
     if (found) return found;
@@ -57,20 +62,30 @@ export default function ChallengeDetail() {
     // 토스페이 연동 시뮬레이션 (1.2초 후 완료)
     setTimeout(() => {
       // localStorage에 참여 챌린지 추가
+      const daysTotal  = parseInt(challenge.duration) || 30;
+      const todayStr   = new Date().toISOString().split('T')[0];
+      const endDateStr = (() => {
+        const d = new Date();
+        d.setDate(d.getDate() + daysTotal);
+        return d.toISOString().split('T')[0];
+      })();
       const newEntry = {
-        id: Number(id),
-        title: challenge.title,
-        category: challenge.category,
-        deposit: challenge.deposit,
-        dDay: 30,
-        streak: 0,
-        role: 'member',
-        joinedAt: new Date().toISOString(),
+        id:        Number(id),
+        title:     challenge.title,
+        category:  challenge.category,
+        deposit:   challenge.deposit,
+        dDay:      daysTotal,
+        streak:    0,
+        role:      'member',
+        startDate: todayStr,
+        endDate:   endDateStr,
+        joinedAt:  new Date().toISOString(),
       };
       const prev = JSON.parse(localStorage.getItem('my_challenges') || '[]');
       if (!prev.some((c) => String(c.id) === String(id))) {
         localStorage.setItem('my_challenges', JSON.stringify([newEntry, ...prev]));
       }
+      logEvent('challenge_join', `/challenge/${id}`, { challenge_id: id, deposit: challenge.deposit });
       setPaying(false);
       setPaid(true);
       setTimeout(() => {

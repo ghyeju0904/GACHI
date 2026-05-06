@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { PenTool, Shuffle, Wallet, ShieldCheck, Minus, Plus, ChevronLeft, ChevronRight, CalendarDays, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../services/supabase';
 
 /* ───────── 상수 ───────── */
 const CATEGORIES = [
@@ -379,17 +380,41 @@ export default function ChallengeCreate() {
           </button>
         )}
         <button
-          onClick={() => {
+          onClick={async () => {
             if (step === STEP_LABELS.length - 1) {
-              // 완료: localStorage에 저장
+              const durationDays = Math.round(
+                (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)
+              ) + 1;
+
+              // Supabase에 저장
+              let supabaseId = null;
+              const { data: sbData, error } = await supabase
+                .from('challenges')
+                .insert({
+                  title,
+                  category,
+                  duration:     durationDays,
+                  max_members:  parseInt(memberCount) || 2,
+                  deposit,
+                  certify_type: certifyType,
+                  status:       'active',
+                })
+                .select()
+                .single();
+
+              if (!error && sbData) supabaseId = sbData.id;
+              else console.error('챌린지 저장 실패:', error);
+
+              // localStorage에도 저장 (내 챌린지 표시용)
               const newChallenge = {
-                id: Date.now(),
-                title, category, duration: `${startDate} ~ ${endDate}`,
+                id:          supabaseId || Date.now(),
+                title, category,
+                duration:    `${startDate} ~ ${endDate}`,
                 startDate, endDate, dayType, excludeHoliday,
                 memberCount: parseInt(memberCount) || 2,
-                deposit, certifyType,
-                createdAt: new Date().toISOString(),
-                role: 'owner',
+                deposit,     certifyType,
+                createdAt:   new Date().toISOString(),
+                role:        'owner',
               };
               const prev = JSON.parse(localStorage.getItem('my_challenges') || '[]');
               localStorage.setItem('my_challenges', JSON.stringify([newChallenge, ...prev]));

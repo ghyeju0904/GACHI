@@ -24,11 +24,6 @@ function getLevel(streak) {
 const toDateStr = (y, m, d) =>
   `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-const JOINED_DUMMY = [
-  { id: 7, title: '하루 1시간 바이브코딩', category: '바이브코딩', dDay: 14, streak: 5,  deposit: 10000 },
-  { id: 5, title: '매일 1시간 집중 공부',  category: '스터디',     dDay: 22, streak: 12, deposit: 15000 },
-];
-
 const DEFAULT_PROFILE = { avatar: '🐰', nickname: '챌린저', bio: '목표는 꾸준함!' };
 
 /* ───────── 컴포넌트 ───────── */
@@ -39,13 +34,13 @@ export default function Profile() {
 
   const [profile,         setProfile]         = useState(DEFAULT_PROFILE);
   const [mainTab,         setMainTab]          = useState('challenges');
-  const [challengeTab,    setChallengeTab]     = useState('joined');
+  const [challengeTab,    setChallengeTab]     = useState('owned');
   const [calYear,         setCalYear]          = useState(today.getFullYear());
   const [calMonth,        setCalMonth]         = useState(today.getMonth());
   const [certByChallenge, setCertByChallenge]  = useState({});
   const [certifiedDates,  setCertifiedDates]   = useState(new Set());
   const [ownedChallenges, setOwnedChallenges]  = useState([]);
-  const [joinedChallenges, setJoinedChallenges] = useState(JOINED_DUMMY);
+  const [joinedChallenges, setJoinedChallenges] = useState([]);
   const [showLevelModal,  setShowLevelModal]   = useState(false);
 
   useEffect(() => {
@@ -73,17 +68,14 @@ export default function Profile() {
 
     // 내가 개설한 챌린지 + 참여 중인 챌린지
     try {
-      const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      const all        = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      const givenUpIds = new Set(JSON.parse(localStorage.getItem('given_up_challenges') || '[]').map(String));
+
       setOwnedChallenges(all.filter((c) => c.role === 'owner'));
 
-      // localStorage member + JOINED_DUMMY 병합 (중복 제거)
-      const fromLS = all.filter((c) => c.role === 'member');
-      const lsIds  = new Set(fromLS.map((c) => String(c.id)));
-      const merged = [
-        ...fromLS,
-        ...JOINED_DUMMY.filter((c) => !lsIds.has(String(c.id))),
-      ];
-      setJoinedChallenges(merged);
+      // localStorage member 전체 (포기한 챌린지 제외)
+      const fromLS = all.filter((c) => c.role === 'member' && !givenUpIds.has(String(c.id)));
+      setJoinedChallenges(fromLS);
     } catch {}
   }, []);
 
@@ -217,7 +209,7 @@ export default function Profile() {
       {mainTab === 'challenges' && (
         <div style={{ padding: '16px 20px' }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            {[['joined', '참여 중인 챌린지'], ['owned', '운영 중인 챌린지']].map(([key, label]) => (
+            {[['owned', '운영 중인 챌린지'], ['joined', '참여 중인 챌린지']].map(([key, label]) => (
               <button key={key} onClick={() => setChallengeTab(key)} style={{
                 flex: 1, padding: '10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                 background: challengeTab === key ? 'var(--primary)' : '#F3F4F6',

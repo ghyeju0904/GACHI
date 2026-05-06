@@ -1,6 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { ArrowLeft, Camera, CheckSquare, Edit3, Image, X, CheckCircle, ShieldCheck } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { logEvent } from '../../services/logger';
 
 /* 챌린지별 허용 인증 방식 (id → tab key) */
 const CHALLENGE_CERTIFY_TYPE = {
@@ -34,6 +35,9 @@ export default function Certify() {
 
   const [activeTab,      setActiveTab]      = useState(allowedType || 'photo');
   const [photoPreview,   setPhotoPreview]   = useState(null);
+  const [photoBase64,    setPhotoBase64]    = useState(null);
+  const [textValue,      setTextValue]      = useState('');
+  const [commentValue,   setCommentValue]   = useState('');
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const galleryInputRef = useRef(null);
   const cameraInputRef  = useRef(null);
@@ -47,11 +51,17 @@ export default function Certify() {
 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
-    if (file) setPhotoPreview(URL.createObjectURL(file));
+    if (file) {
+      setPhotoPreview(URL.createObjectURL(file));
+      const reader = new FileReader();
+      reader.onload = (ev) => setPhotoBase64(ev.target.result);
+      reader.readAsDataURL(file);
+    }
     e.target.value = '';
   };
 
   const handleUpload = () => {
+    // 인증 날짜 기록
     const certData = JSON.parse(localStorage.getItem('certified_by_challenge') || '{}');
     if (!certData[id]) certData[id] = [];
     if (!certData[id].includes(today)) certData[id].push(today);
@@ -61,6 +71,47 @@ export default function Certify() {
     if (!dates.includes(today)) {
       localStorage.setItem('certified_dates', JSON.stringify([...dates, today]));
     }
+
+    // 피드 포스트 저장
+    const prof     = (() => { try { return JSON.parse(localStorage.getItem('profile') || 'null'); } catch { return null; } })();
+    const username = prof?.nickname || '나';
+    const avatar   = prof?.avatar   || '🐰';
+
+    const comment = commentValue.trim();
+    const defaultContent =
+      activeTab === 'photo' ? '📸 사진으로 인증했어요!' :
+      activeTab === 'text'  ? (textValue.trim() || '✍️ 텍스트로 인증했어요!') :
+                              '✅ 체크인으로 인증했어요!';
+
+    const newPost = {
+      id:        Date.now(),
+      username,
+      avatar,
+      createdAt: new Date().toISOString(),
+      type:      activeTab,
+      photoData: activeTab === 'photo' ? (photoBase64 || null) : null,
+      textBody:  activeTab === 'text'  ? textValue.trim() : null,
+      content:   comment || defaultContent,
+      approve:   0,
+      reject:    0,
+      myVote:    null,
+      isMyPost:  true,
+    };
+
+    try {
+      const allPosts = JSON.parse(localStorage.getItem('feed_posts') || '{}');
+      allPosts[id]   = [newPost, ...(allPosts[id] || [])];
+      localStorage.setItem('feed_posts', JSON.stringify(allPosts));
+    } catch {
+      // 용량 초과 시 사진 데이터 제외 후 재시도
+      try {
+        const allPosts = JSON.parse(localStorage.getItem('feed_posts') || '{}');
+        allPosts[id]   = [{ ...newPost, photoData: null }, ...(allPosts[id] || [])];
+        localStorage.setItem('feed_posts', JSON.stringify(allPosts));
+      } catch {}
+    }
+
+    logEvent('certification_submit', `/certify/${id}`, { challenge_id: id, type: activeTab });
     navigate(`/feed/${id || 1}`);
   };
 
@@ -124,7 +175,7 @@ export default function Certify() {
               {photoPreview ? (
                 <>
                   <img src={photoPreview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  <button onClick={() => setPhotoPreview(null)}
+                  <button onClick={() => { setPhotoPreview(null); setPhotoBase64(null); }}
                     style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(0,0,0,0.5)', border: 'none', borderRadius: '50%', padding: '6px', color: 'white', cursor: 'pointer', display: 'flex' }}>
                     <X size={16} />
                   </button>
@@ -172,8 +223,10 @@ export default function Certify() {
 
         {/* 텍스트 인증 */}
         {(allowedType === 'text' || (!allowedType && activeTab === 'text')) && (
-          <textarea placeholder="오늘의 인증 내용을 자세히 작성해주세요. (최소 10자 이상)"
-            style={{ width: '100%', height: '240px', padding: '16px', borderRadius: '16px', border: '1px solid var(--border-color)', resize: 'none', outline: 'none', fontSize: '15px', fontFamily: 'inherit' }} />
+          <textarea
+            value={textValue} onChange={(e) => setTextValue(e.target.value)}
+            placeholder="오늘의 인증 내용을 자세히 작성해주세요. (최소 10자 이상)"
+            style={{ width: '100%', height: '240px', padding: '16px', borderRadius: '16px', border: '1px solid var(--border-color)', resize: 'none', outline: 'none', fontSize: '15px', fontFamily: 'inherit', boxSizing: 'border-box' }} />
         )}
 
         {/* 체크인 */}
@@ -188,8 +241,10 @@ export default function Certify() {
 
         <div style={{ marginTop: '24px' }}>
           <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>한 줄 코멘트 (선택)</label>
-          <input type="text" placeholder="인증글과 함께 피드에 보여질 짧은 한 마디!"
-            style={{ width: '100%', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', fontSize: '15px', outline: 'none' }} />
+          <input
+            type="text" value={commentValue} onChange={(e) => setCommentValue(e.target.value)}
+            placeholder="인증글과 함께 피드에 보여질 짧은 한 마디!"
+            style={{ width: '100%', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', fontSize: '15px', outline: 'none', boxSizing: 'border-box' }} />
         </div>
       </div>
 

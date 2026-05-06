@@ -1,6 +1,17 @@
 import React, { useState, useMemo } from 'react';
-import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy } from 'lucide-react';
+import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut } from 'lucide-react';
+import { logEvent } from '../../services/logger';
 import { useNavigate, useParams } from 'react-router-dom';
+
+function getRelativeTime(isoStr) {
+  const diff = Date.now() - new Date(isoStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1)  return '방금 전';
+  if (mins < 60) return `${mins}분 전`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)  return `${hrs}시간 전`;
+  return `${Math.floor(hrs / 24)}일 전`;
+}
 
 const ALL_CHALLENGES = [
   { id: 1,  title: '새벽 5시 기상 루틴 21일',     category: '미라클모닝' },
@@ -21,6 +32,10 @@ export default function GroupFeed() {
   const navigate = useNavigate();
   const { id } = useParams();
 
+  useEffect(() => {
+    logEvent('feed_view', `/feed/${id}`, { challenge_id: id });
+  }, [id]);
+
   const challengeTitle = useMemo(() => {
     const found = ALL_CHALLENGES.find((c) => String(c.id) === String(id));
     if (found) return found.title;
@@ -32,28 +47,42 @@ export default function GroupFeed() {
     return '챌린지 피드';
   }, [id]);
 
-  const [posts, setPosts] = useState([
-    {
-      id: 1,
-      username: '김직장인',
-      avatar: '🐰',
-      time: '10분 전',
-      content: '오늘도 바이브코딩 달렸습니다!!',
-      approve: 8,
-      reject: 1,
-      myVote: null,
-    },
-    {
-      id: 2,
-      username: '이대학원',
-      avatar: '🐻',
-      time: '1시간 전',
-      content: '리액트 기초 복습 끝!',
-      approve: 5,
-      reject: 4,
-      myVote: null,
-    },
-  ]);
+  const challengeData = useMemo(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      return all.find((c) => String(c.id) === String(id)) || null;
+    } catch { return null; }
+  }, [id]);
+
+  const [giveUpModal, setGiveUpModal] = useState(false);
+  const [giveUpStep,  setGiveUpStep]  = useState(1);
+
+  const openGiveUp  = () => { setGiveUpModal(true); setGiveUpStep(1); };
+  const closeGiveUp = () => setGiveUpModal(false);
+
+  const handleConfirmGiveUp = () => {
+    try {
+      const all = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      localStorage.setItem('my_challenges', JSON.stringify(all.filter((c) => String(c.id) !== String(id))));
+      const prev = JSON.parse(localStorage.getItem('given_up_challenges') || '[]');
+      localStorage.setItem('given_up_challenges', JSON.stringify([...new Set([...prev.map(String), String(id)])]));
+    } catch {}
+    navigate('/home');
+  };
+
+  const [posts, setPosts] = useState(() => {
+    const myPosts = (() => {
+      try {
+        const allPosts = JSON.parse(localStorage.getItem('feed_posts') || '{}');
+        return (allPosts[id] || []).map((p) => ({ ...p, time: getRelativeTime(p.createdAt) }));
+      } catch { return []; }
+    })();
+    return [
+      ...myPosts,
+      { id: 101, username: '김직장인', avatar: '🐰', time: '10분 전', content: '오늘도 바이브코딩 달렸습니다!!', approve: 8, reject: 1, myVote: null },
+      { id: 102, username: '이대학원', avatar: '🐻', time: '1시간 전', content: '리액트 기초 복습 끝!', approve: 5, reject: 4, myVote: null },
+    ];
+  });
 
   const totalMembers = 12;
 
@@ -101,13 +130,20 @@ export default function GroupFeed() {
           <ArrowLeft size={24} style={{ cursor: 'pointer', marginRight: '16px' }} onClick={() => navigate('/home')} />
           <h1 className="font-display" style={{ fontSize: '15px', margin: 0, color: 'var(--primary)' }}>{challengeTitle}</h1>
         </div>
-        {/* 챌린지 종료 결과 보기 버튼 */}
-        <button
-          onClick={() => navigate(`/result/${id}`)}
-          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'var(--text-muted)' }}
-        >
-          <Trophy size={14} /> 결과보기
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* 중도 포기 버튼 */}
+          <button onClick={openGiveUp}
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <LogOut size={14} /> 포기
+          </button>
+          {/* 챌린지 종료 결과 보기 버튼 */}
+          <button
+            onClick={() => navigate(`/result/${id}`)}
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', color: 'var(--text-muted)' }}
+          >
+            <Trophy size={14} /> 결과보기
+          </button>
+        </div>
       </header>
 
       {/* 그룹 달성률 요약 */}
@@ -163,12 +199,26 @@ export default function GroupFeed() {
                 </div>
               </div>
 
-              {/* 인증 사진 영역 */}
-              <div style={{ height: '200px', background: '#F3F4F6', borderRadius: '8px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '14px' }}>
-                인증 사진 영역
-              </div>
+              {/* 인증 콘텐츠 */}
+              {post.type === 'text' ? (
+                <div style={{ background: '#F8F9FA', borderRadius: '8px', padding: '16px', marginBottom: '12px', fontSize: '14px', lineHeight: 1.7, color: 'var(--text-main)', whiteSpace: 'pre-wrap' }}>
+                  {post.textBody || post.content}
+                </div>
+              ) : post.type === 'check' ? (
+                <div style={{ height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#E0FAF4', borderRadius: '8px', marginBottom: '12px', fontSize: '16px', fontWeight: 'bold', color: 'var(--success)' }}>
+                  ✅ 체크인 완료
+                </div>
+              ) : post.photoData ? (
+                <img src={post.photoData} alt="인증 사진" style={{ width: '100%', height: '200px', objectFit: 'cover', borderRadius: '8px', marginBottom: '12px', display: 'block' }} />
+              ) : (
+                <div style={{ height: '200px', background: '#F3F4F6', borderRadius: '8px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '14px' }}>
+                  인증 사진 영역
+                </div>
+              )}
 
-              <p style={{ fontSize: '14px', lineHeight: 1.5, marginBottom: '16px', color: 'var(--text-main)' }}>{post.content}</p>
+              {post.content && (
+                <p style={{ fontSize: '14px', lineHeight: 1.5, marginBottom: '16px', color: 'var(--text-main)' }}>{post.content}</p>
+              )}
 
               {/* 인정/미인정 투표 */}
               <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
@@ -225,6 +275,60 @@ export default function GroupFeed() {
           오늘도 챌리 불꽃 지켜! (인증하기)
         </button>
       </div>
+
+      {/* 중도 포기 모달 */}
+      {giveUpModal && (
+        <div onClick={closeGiveUp}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: '480px', background: 'white', borderRadius: '20px 20px 0 0', padding: '28px 24px 40px' }}>
+
+            {giveUpStep === 1 ? (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <div style={{ fontSize: '52px', marginBottom: '14px' }}>🔥</div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: 'var(--text-main)' }}>포기하기 전에 잠깐만요!</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+                    챌린지 완주까지 앞으로<br />
+                    <strong style={{ fontSize: '20px', color: 'var(--primary)' }}>D-{challengeData?.dDay ?? '?'}</strong>일 남았어요.<br />
+                    여기서 멈추기엔 너무 아깝잖아요.<br />
+                    우리 좀 더 같이 달려봐요! 💪
+                  </p>
+                </div>
+                <button onClick={closeGiveUp}
+                  style={{ width: '100%', padding: '15px', background: 'var(--primary)', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '10px' }}>
+                  계속 도전할게요! 💪
+                </button>
+                <button onClick={() => setGiveUpStep(2)}
+                  style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+                  그래도 포기할게요
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <div style={{ fontSize: '52px', marginBottom: '14px' }}>⚠️</div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: '#EF4444' }}>중도 포기 = 실패 처리</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+                    중도 포기는 챌린지 실패와 동일하게 처리돼요.<br />
+                    납부하신 보증금{' '}
+                    <strong style={{ color: '#EF4444' }}>{challengeData?.deposit?.toLocaleString() ?? 0}원</strong>은<br />
+                    <strong>반환되지 않습니다.</strong>
+                  </p>
+                </div>
+                <button onClick={handleConfirmGiveUp}
+                  style={{ width: '100%', padding: '15px', background: '#EF4444', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '10px' }}>
+                  포기하기
+                </button>
+                <button onClick={() => setGiveUpStep(1)}
+                  style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+                  돌아가기
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
