@@ -68,8 +68,11 @@ export default function ChallengeManage() {
     </div>
   );
 
-  const participantMembers = members.filter((m) => m.role === 'member');
-  const memberCount        = participantMembers.length;
+  const participantMembers = members.filter((m) =>
+    m.role === 'member' ||
+    (m.role === 'owner' && challenge.owner_participates && m.status !== 'observer')
+  );
+  const memberCount = participantMembers.length;
   const maxMembers         = challenge.max_members || 30;
   const isFull             = memberCount >= maxMembers;
 
@@ -190,7 +193,12 @@ export default function ChallengeManage() {
                   <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#FFF0EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
                     {m.profiles?.avatar || '🐰'}
                   </div>
-                  <span style={{ fontSize: '14px', fontWeight: 'bold' }}>{m.profiles?.nickname || '익명'}</span>
+                  <div>
+                    <span style={{ fontSize: '14px', fontWeight: 'bold' }}>{m.profiles?.nickname || '익명'}</span>
+                    {m.role === 'owner' && (
+                      <span style={{ marginLeft: '6px', fontSize: '11px', color: 'var(--primary)', background: '#FFF0EB', padding: '1px 6px', borderRadius: '8px', fontWeight: 'bold' }}>운영자</span>
+                    )}
+                  </div>
                 </div>
                 {m.certifiedToday
                   ? <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#10B981', background: '#D1FAE5', padding: '3px 10px', borderRadius: '20px' }}>✓ 인증완료</span>
