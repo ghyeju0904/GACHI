@@ -22,7 +22,16 @@
       "PowerShell(head *)",
       "Bash(Get-Content \"C:\\\\dev\\\\project\\\\CHALLY\\\\src\\\\pages\\\\home\\\\Home.jsx\")",
       "Bash(Select-Object -First 30)",
-      "Bash(dir C:\\\\dev\\\\project\\\\CHALLY\\\\src\\\\assets\\\\images *)"
+      "Bash(dir C:\\\\dev\\\\project\\\\CHALLY\\\\src\\\\assets\\\\images *)",
+      "WebFetch(domain:developers.notion.com)",
+      "WebFetch(domain:shinzo.ai)",
+      "WebFetch(domain:mcp.harishgarg.com)",
+      "Bash(claude mcp *)",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "mcp__claude_ai_Notion__notion-search",
+      "mcp__claude_ai_Notion__notion-create-pages",
+      "mcp__claude_ai_Notion__notion-update-page",
+      "Skill(schedule)"
     ]
   }
 }
