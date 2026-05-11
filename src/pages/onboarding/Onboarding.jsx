@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Flame } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { getDeviceId } from '../../utils/deviceId';
+import gachiIllust from '../../assets/fonts/images/가치.png';
 
 const MAX_SELECT = 5;
 
@@ -59,8 +60,15 @@ export default function Onboarding() {
           <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>가치</span>
         </p>
 
+        {/* 일러스트 */}
+        <img
+          src={gachiIllust}
+          alt="가치 일러스트"
+          style={{ width: '200px', height: '200px', objectFit: 'contain', marginTop: '20px' }}
+        />
+
         {/* 안내 문구 */}
-        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '14px', marginTop: '20px' }}>
+        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '14px', marginTop: '12px' }}>
           나에게 꼭 맞는 챌린지를 찾기 위해<br />관심사를 최대 5개 선택해주세요
         </p>
 

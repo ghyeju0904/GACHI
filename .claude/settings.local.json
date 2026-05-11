@@ -21,7 +21,8 @@
       "Bash(Select-Object -Property Name, PSIsContainer)",
       "PowerShell(head *)",
       "Bash(Get-Content \"C:\\\\dev\\\\project\\\\CHALLY\\\\src\\\\pages\\\\home\\\\Home.jsx\")",
-      "Bash(Select-Object -First 30)"
+      "Bash(Select-Object -First 30)",
+      "Bash(dir C:\\\\dev\\\\project\\\\CHALLY\\\\src\\\\assets\\\\images *)"
     ]
   }
 }
