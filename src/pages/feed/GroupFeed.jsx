@@ -20,6 +20,7 @@ export default function GroupFeed() {
   const { id } = useParams();
 
   const [challengeTitle,      setChallengeTitle]      = useState('챌린지 피드');
+  const [challengeStatus,     setChallengeStatus]     = useState(null);
   const [earlyCloseActive,    setEarlyCloseActive]    = useState(false);
   const [earlyCloseStartedAt, setEarlyCloseStartedAt] = useState(null);
   const [myCloseVote,         setMyCloseVote]         = useState(null);
@@ -31,12 +32,13 @@ export default function GroupFeed() {
     const fetchTitle = async () => {
       const { data, error } = await supabase
         .from('challenges')
-        .select('title, early_close_active, early_close_started_at')
+        .select('title, status, early_close_active, early_close_started_at')
         .eq('id', id)
         .single();
 
       if (!error && data) {
         setChallengeTitle(data.title);
+        setChallengeStatus(data.status);
         setEarlyCloseActive(data.early_close_active || false);
         setEarlyCloseStartedAt(data.early_close_started_at || null);
       } else {
@@ -259,6 +261,43 @@ export default function GroupFeed() {
     if (approveRate >= 0.5) return 'approved';
     return 'rejected';
   };
+
+  const isClosed = challengeStatus === 'early_closed' || challengeStatus === 'completed';
+
+  if (isClosed) {
+    const isEarlyClosed = challengeStatus === 'early_closed';
+    return (
+      <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ padding: '16px 20px', background: 'white', display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-color)' }}>
+          <ArrowLeft size={24} style={{ cursor: 'pointer', marginRight: '16px' }} onClick={() => navigate('/home')} />
+          <h1 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>{challengeTitle}</h1>
+        </header>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', textAlign: 'center' }}>
+          <div style={{ fontSize: '56px', marginBottom: '20px' }}>{isEarlyClosed ? '🔒' : '🏁'}</div>
+          <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '10px', color: 'var(--text-main)' }}>
+            마감된 챌린지예요
+          </h2>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: '32px' }}>
+            {isEarlyClosed
+              ? '참여자 동의로 조기 종료된 챌린지입니다.\n더 이상 접근할 수 없어요.'
+              : '챌린지 기간이 종료되었습니다.\n결과 페이지에서 최종 현황을 확인하세요.'}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', maxWidth: '280px' }}>
+            {!isEarlyClosed && (
+              <button onClick={() => navigate(`/result/${id}`)}
+                style={{ width: '100%', padding: '14px', background: 'var(--primary)', color: 'white', borderRadius: '12px', fontSize: '15px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>
+                결과 보기
+              </button>
+            )}
+            <button onClick={() => navigate('/home')}
+              style={{ width: '100%', padding: '14px', background: 'white', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '15px', fontWeight: 'bold', border: '1px solid var(--border-color)', cursor: 'pointer' }}>
+              홈으로 돌아가기
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', paddingBottom: '100px' }}>

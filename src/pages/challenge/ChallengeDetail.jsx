@@ -213,6 +213,31 @@ export default function ChallengeDetail() {
     </div>
   );
 
+  if (challenge.status === 'early_closed' || challenge.status === 'completed') {
+    const isEarlyClosed = challenge.status === 'early_closed';
+    return (
+      <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ padding: '16px 20px', background: 'white', display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-color)' }}>
+          <ArrowLeft size={24} style={{ cursor: 'pointer', marginRight: '16px' }} onClick={() => navigate('/home')} />
+          <h1 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>{challenge.title}</h1>
+        </header>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', textAlign: 'center' }}>
+          <div style={{ fontSize: '56px', marginBottom: '20px' }}>{isEarlyClosed ? '🔒' : '🏁'}</div>
+          <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '10px' }}>마감된 챌린지예요</h2>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: '32px' }}>
+            {isEarlyClosed
+              ? '참여자 동의로 조기 종료된 챌린지입니다.\n더 이상 접근할 수 없어요.'
+              : '챌린지 기간이 종료되었습니다.\n참여하실 수 없어요.'}
+          </p>
+          <button onClick={() => navigate('/home')}
+            style={{ padding: '14px 32px', background: 'var(--primary)', color: 'white', borderRadius: '12px', fontSize: '15px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>
+            홈으로 돌아가기
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', paddingBottom: '160px' }}>
 
