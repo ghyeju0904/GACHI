@@ -1,0 +1,231 @@
+name: 주간 회고 자동 작성 (Notion)
+
+on:
+  schedule:
+    - cron: '55 14 * * 0'  # 매주 일요일 23:55 KST (14:55 UTC)
+  workflow_dispatch:
+
+jobs:
+  weekly-recap:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Python 환경 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 의존성 설치
+        run: pip install requests
+
+      - name: 이번 주 일일 회고 수집 → Claude 종합 → Notion 업로드
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import requests, json, os, sys
+          from datetime import datetime, timedelta, timezone
+
+          # ── 환경 변수 ──────────────────────────────────────────────────
+          NOTION_KEY  = os.environ['NOTION_API_KEY']
+          GEMINI_KEY  = os.environ['GEMINI_API_KEY']
+          DB_ID       = '35def9f4ad0d8147b0d2c9d57df54cad'
+
+          NOTION_HDR = {
+              'Authorization': f'Bearer {NOTION_KEY}',
+              'Content-Type':  'application/json',
+              'Notion-Version': '2022-06-28',
+          }
+          GEMINI_URL = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}'
+
+          # ── 이번 주 월~일 (KST = UTC+9) ────────────────────────────────
+          KST       = timezone(timedelta(hours=9))
+          now_kst   = datetime.now(KST)
+          monday    = now_kst - timedelta(days=now_kst.weekday())
+          sunday    = monday + timedelta(days=6)
+          mon_str   = monday.strftime('%Y-%m-%d')
+          sun_str   = sunday.strftime('%Y-%m-%d')
+          week_label = f'{monday.strftime("%m/%d")}~{sunday.strftime("%m/%d")}'
+          print(f'대상 기간: {mon_str} ~ {sun_str}')
+
+          # ── Notion DB 쿼리: 이번 주 일일 회고 페이지 ──────────────────
+          query = {
+              'filter': {
+                  'and': [
+                      {'property': '할일', 'title': {'starts_with': '📅 일일 회고'}},
+                      {'property': '해치울 날', 'date': {'on_or_after':  mon_str}},
+                      {'property': '해치울 날', 'date': {'on_or_before': sun_str}},
+                  ]
+              },
+              'sorts': [{'property': '해치울 날', 'direction': 'ascending'}],
+          }
+          r = requests.post(
+              f'https://api.notion.com/v1/databases/{DB_ID}/query',
+              headers=NOTION_HDR, json=query,
+          )
+          pages = r.json().get('results', [])
+          print(f'일일 회고 페이지: {len(pages)}개')
+
+          if not pages:
+              print('이번 주 일일 회고 없음 — 종료')
+              sys.exit(0)
+
+          # ── 각 페이지 블록 텍스트 추출 ──────────────────────────────────
+          def fetch_blocks(page_id):
+              texts, cursor = [], None
+              while True:
+                  params = {'page_size': 100}
+                  if cursor:
+                      params['start_cursor'] = cursor
+                  resp = requests.get(
+                      f'https://api.notion.com/v1/blocks/{page_id}/children',
+                      headers=NOTION_HDR, params=params,
+                  ).json()
+                  for blk in resp.get('results', []):
+                      btype = blk.get('type', '')
+                      rich  = blk.get(btype, {}).get('rich_text', [])
+                      line  = ''.join(rt.get('plain_text', '') for rt in rich)
+                      if line.strip():
+                          texts.append(line)
+                  if not resp.get('has_more'):
+                      break
+                  cursor = resp.get('next_cursor')
+              return '\n'.join(texts)
+
+          daily_sections = []
+          for page in pages:
+              props     = page.get('properties', {})
+              date_prop = props.get('해치울 날', {}).get('date') or {}
+              date_str  = date_prop.get('start', '?')
+              title_rt  = props.get('할일', {}).get('title', [])
+              title     = ''.join(t.get('plain_text', '') for t in title_rt)
+              content   = fetch_blocks(page['id'])
+              daily_sections.append(
+                  f'=== {date_str} ({title}) ===\n{content if content else "(내용 없음)"}'
+              )
+
+          combined = '\n\n'.join(daily_sections)
+          print(f'수집된 내용: {len(combined)}자')
+
+          # ── Claude로 주간 회고 종합 ─────────────────────────────────────
+          prompt = f"""다음은 {mon_str} ~ {sun_str} 이번 주 일일 작업 기록입니다.
+
+{combined}
+
+위 기록을 분석해 이번 주 개발 회고를 작성해주세요.
+아래 5개 섹션을 반드시 포함하고, 각 섹션은 "## " 로 시작하는 헤딩으로 구분하세요.
+실제 작업 내용에 근거해 구체적으로 한국어로 작성하세요.
+
+## 📌 이번 주 작업 요약
+커밋/작업 내용을 날짜 흐름에 따라 스토리텔링 방식으로 요약 (단순 나열 금지)
+
+## ✅ 잘 된 점 (Keep)
+이번 주 잘 진행되어 다음에도 유지할 습관·방식·태도를 구체적으로 기술
+
+## ⚠️ 아쉬운 점 (Problem)
+어려웠거나 개선이 필요했던 점을 솔직하게 — 원인까지 분석
+
+## 🚀 다음 주 목표 (Try)
+이번 회고를 바탕으로 다음 주에 시도하거나 개선할 구체적 액션
+
+## 💡 성장 포인트
+이번 주를 통해 배운 것, 새롭게 알게 된 기술·관점·인사이트"""
+
+          gemini_resp = requests.post(
+              GEMINI_URL,
+              headers={'Content-Type': 'application/json'},
+              json={'contents': [{'parts': [{'text': prompt}]}]},
+          ).json()
+
+          if 'error' in gemini_resp:
+              print(f'Gemini 오류: {gemini_resp["error"]}')
+              sys.exit(1)
+
+          recap_text = gemini_resp['candidates'][0]['content']['parts'][0]['text']
+          print('Gemini 합성 완료')
+
+          # ── 텍스트 → Notion 블록 변환 ──────────────────────────────────
+          def to_blocks(text):
+              blocks = []
+              for raw in text.split('\n'):
+                  line = raw.rstrip()
+                  if not line:
+                      continue
+                  if line.startswith('## '):
+                      blocks.append({
+                          'object': 'block', 'type': 'heading_2',
+                          'heading_2': {'rich_text': [{'text': {'content': line[3:]}}]},
+                      })
+                  elif line.startswith('### '):
+                      blocks.append({
+                          'object': 'block', 'type': 'heading_3',
+                          'heading_3': {'rich_text': [{'text': {'content': line[4:]}}]},
+                      })
+                  elif line.startswith(('- ', '• ', '· ')):
+                      blocks.append({
+                          'object': 'block', 'type': 'bulleted_list_item',
+                          'bulleted_list_item': {'rich_text': [{'text': {'content': line[2:]}}]},
+                      })
+                  elif line[0].isdigit() and len(line) > 2 and line[1] in '.':
+                      blocks.append({
+                          'object': 'block', 'type': 'numbered_list_item',
+                          'numbered_list_item': {'rich_text': [{'text': {'content': line[3:].strip()}}]},
+                      })
+                  else:
+                      blocks.append({
+                          'object': 'block', 'type': 'paragraph',
+                          'paragraph': {'rich_text': [{'text': {'content': line}}]},
+                      })
+              return blocks
+
+          callout = {
+              'object': 'block', 'type': 'callout',
+              'callout': {
+                  'icon': {'type': 'emoji', 'emoji': '🗓'},
+                  'color': 'blue_background',
+                  'rich_text': [{'text': {'content':
+                      f'{mon_str} ~ {sun_str} ({len(pages)}일치 일일 회고 기반 자동 생성)'
+                  }}],
+              },
+          }
+          divider = {'object': 'block', 'type': 'divider', 'divider': {}}
+          children = [callout, divider] + to_blocks(recap_text)
+
+          # Notion API: 블록 100개 제한 → 나눠서 추가
+          children_chunks = [children[i:i+100] for i in range(0, len(children), 100)]
+
+          # ── Notion 페이지 생성 ──────────────────────────────────────────
+          page_title = f'📋 주간 회고 — {week_label}'
+          create = requests.post(
+              'https://api.notion.com/v1/pages',
+              headers=NOTION_HDR,
+              json={
+                  'parent': {'type': 'database_id', 'database_id': DB_ID},
+                  'properties': {
+                      '할일':     {'title':  [{'text': {'content': page_title}}]},
+                      '진행 사항': {'status': {'name': '완료'}},
+                      '카테고리': {'select': {'name': '개인 업무'}},
+                      '해치울 날': {'date':   {'start': sun_str}},
+                  },
+                  'children': children_chunks[0],
+              },
+          ).json()
+
+          if 'url' not in create:
+              print(f'페이지 생성 실패: {create}')
+              sys.exit(1)
+
+          page_id = create['id']
+          print(f'주간 회고 페이지 생성: {create["url"]}')
+
+          # 100개 초과 블록 추가
+          for chunk in children_chunks[1:]:
+              requests.patch(
+                  f'https://api.notion.com/v1/blocks/{page_id}/children',
+                  headers=NOTION_HDR,
+                  json={'children': chunk},
+              )
+
+          print('완료!')
+          PYEOF

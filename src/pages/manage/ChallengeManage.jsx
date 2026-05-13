@@ -116,51 +116,37 @@ export default function ChallengeManage() {
 
   // 챌린지 중지 요청
   const handleStartCloseVote = async () => {
-    console.log('[VOTE] 시작');
     const now = new Date().toISOString();
 
     setShowClose(false);
     setVoteActive(true);
     setVoteStartedAt(now);
-    console.log('[VOTE] UI 업데이트 완료 - voteActive=true');
 
-    const { data: updData, error } = await supabase
+    const { error } = await supabase
       .from('challenges')
       .update({ early_close_active: true, early_close_started_at: now })
-      .eq('id', id)
-      .select();
-
-    console.log('[VOTE] Supabase update 결과:', { updData, error });
+      .eq('id', id);
 
     if (error) {
-      console.error('[VOTE] 업데이트 실패 → UI 롤백:', error.message, error.code);
       setVoteActive(false);
       setVoteStartedAt(null);
       return;
     }
 
-    console.log('[VOTE] members 목록:', members);
-    console.log('[VOTE] myProfileId:', myProfileId);
-
+    // 강퇴·observer 제외한 전체 멤버에게 알림 (개설자 본인 포함)
     const notifTargets = members
-      .filter((m) => m.user_id !== myProfileId && m.status !== 'kicked')
+      .filter((m) => m.status !== 'kicked' && m.status !== 'observer')
       .map((m) => ({
         user_id:      m.user_id,
         challenge_id: id,
         type:         'early_close_request',
         message:      `'${challenge.title}' 챌린지 운영자가 중지를 요청했어요. 24시간 내 응답해주세요.`,
+        read:         false,
       }));
 
-    console.log('[VOTE] 알림 대상:', notifTargets);
-
     if (notifTargets.length > 0) {
-      const { error: notifError } = await supabase.from('notifications').insert(notifTargets);
-      console.log('[VOTE] 알림 전송 결과:', notifError || '성공');
-    } else {
-      console.log('[VOTE] 알림 보낼 대상 없음');
+      await supabase.from('notifications').insert(notifTargets);
     }
-
-    console.log('[VOTE] 완료');
   };
 
   // 참여자 강퇴
@@ -203,12 +189,13 @@ export default function ChallengeManage() {
 
     // 전체 활성 멤버에게 종료 알림 전송
     const notifTargets = members
-      .filter((m) => m.status !== 'kicked' && m.user_id !== myProfileId)
+      .filter((m) => m.status !== 'kicked' && m.status !== 'observer')
       .map((m) => ({
         user_id:      m.user_id,
         challenge_id: id,
         type:         'challenge_closed',
         message:      `'${challenge.title}' 챌린지가 중지 동의로 종료되었어요. 보증금이 전액 반환됩니다.`,
+        read:         false,
       }));
     if (notifTargets.length > 0) {
       await supabase.from('notifications').insert(notifTargets);

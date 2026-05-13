@@ -118,14 +118,22 @@ export default function Certify() {
           }
         }
 
-        await supabase.from('certifications').upsert({
+        // 기존 인증 삭제 후 재삽입 (unique constraint 없어도 안전)
+        await supabase.from('certifications').delete()
+          .eq('challenge_id', id)
+          .eq('user_id', profileId)
+          .eq('cert_date', today);
+
+        const { error: certError } = await supabase.from('certifications').insert({
           challenge_id: id,
           user_id:      profileId,
           cert_date:    today,
           type:         activeTab,
           content:      activeTab === 'text' ? textValue.trim() : (commentValue.trim() || null),
           photo_url:    photoUrl,
-        }, { onConflict: 'challenge_id,user_id,cert_date' });
+        });
+
+        if (certError) throw certError;
       }
     } catch (e) {
       console.error('인증 저장 실패:', e);

@@ -327,23 +327,23 @@ export default function GroupFeed() {
                 <button onClick={async () => {
                   const profileId = await getProfileId();
                   if (!profileId) return;
-                  await supabase.from('early_close_votes').upsert(
-                    { challenge_id: id, user_id: profileId, agreed: true },
-                    { onConflict: 'challenge_id,user_id' }
-                  );
                   setMyCloseVote(true);
                   setCloseVoteCount((v) => v + 1);
+                  await supabase.from('early_close_votes').delete()
+                    .eq('challenge_id', id).eq('user_id', profileId);
+                  await supabase.from('early_close_votes')
+                    .insert({ challenge_id: id, user_id: profileId, agreed: true });
                 }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: '#EF4444', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>
                   동의
                 </button>
                 <button onClick={async () => {
                   const profileId = await getProfileId();
                   if (!profileId) return;
-                  await supabase.from('early_close_votes').upsert(
-                    { challenge_id: id, user_id: profileId, agreed: false },
-                    { onConflict: 'challenge_id,user_id' }
-                  );
                   setMyCloseVote(false);
+                  await supabase.from('early_close_votes').delete()
+                    .eq('challenge_id', id).eq('user_id', profileId);
+                  await supabase.from('early_close_votes')
+                    .insert({ challenge_id: id, user_id: profileId, agreed: false });
                 }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', color: 'var(--text-muted)' }}>
                   반대
                 </button>

@@ -24,6 +24,9 @@ export function AppLayout() {
 
         if (error || !data) return;
 
+        // Supabase 데이터가 있을 때만 localStorage 갱신 (빈 데이터로 로컬 기록 덮어쓰기 방지)
+        if (data.length === 0) return;
+
         // certified_dates: 전체 인증 날짜 Set
         const allDates = [...new Set(data.map((r) => r.cert_date))];
         localStorage.setItem('certified_dates', JSON.stringify(allDates));
