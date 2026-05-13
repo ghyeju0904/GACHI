@@ -1,26 +1,53 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { BottomNav } from './BottomNav';
+import { supabase } from '../../services/supabase';
+import { getProfileId } from '../../utils/getProfileId';
 
-/**
- * AppLayout.jsx
- * 전체 모바일 뷰(최대 가로 480px) 중앙 정렬을 위한 래퍼 컴포넌트입니다.
- * 하단 탭바(BottomNav)를 공통으로 둡니다. (스플래시/온보딩 화면 등에서는 숨길 수 있도록 분기 처리)
- */
 export function AppLayout() {
   const location = useLocation();
-  
-  // 온보딩(S-01), 로그인(S-02) 등 하단 탭 바가 필요 없는 화면 경로
+
   const hideNavRoutes = ['/', '/login', '/onboarding'];
   const shouldHideNav = hideNavRoutes.includes(location.pathname);
+
+  // 앱 시작 시 Supabase certifications → localStorage 동기화
+  useEffect(() => {
+    const syncCertifiedDates = async () => {
+      try {
+        const profileId = await getProfileId();
+        if (!profileId) return;
+
+        const { data, error } = await supabase
+          .from('certifications')
+          .select('cert_date, challenge_id')
+          .eq('user_id', profileId);
+
+        if (error || !data) return;
+
+        // certified_dates: 전체 인증 날짜 Set
+        const allDates = [...new Set(data.map((r) => r.cert_date))];
+        localStorage.setItem('certified_dates', JSON.stringify(allDates));
+
+        // certified_by_challenge: 챌린지별 인증 날짜 Map
+        const byChallenge = {};
+        data.forEach(({ challenge_id, cert_date }) => {
+          const key = String(challenge_id);
+          if (!byChallenge[key]) byChallenge[key] = [];
+          if (!byChallenge[key].includes(cert_date)) byChallenge[key].push(cert_date);
+        });
+        localStorage.setItem('certified_by_challenge', JSON.stringify(byChallenge));
+      } catch {}
+    };
+
+    syncCertifiedDates();
+  }, []);
 
   return (
     <div className="mobile-wrapper">
       <main className="main-content">
-        {/* 하위 라우트 컴포넌트(페이지) 렌더링 영역 */}
         <Outlet />
       </main>
-      
+
       {!shouldHideNav && <BottomNav />}
     </div>
   );

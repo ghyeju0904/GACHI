@@ -1,0 +1,32 @@
+[project]
+# Supabase 프로젝트 레퍼런스 ID (supabase 대시보드 > Settings > General에서 확인)
+project_id = "your-project-ref"
+
+[functions.check-challenge-expiry]
+verify_jwt = false
+
+[functions.check-early-close]
+verify_jwt = false
+
+# Cron 스케줄 (pg_cron — Supabase 대시보드 > Database > Extensions > pg_cron 활성화 필요)
+# 아래 SQL을 Supabase SQL Editor에서 실행하세요:
+#
+# -- 매일 자정: 만료 챌린지 처리
+# select cron.schedule(
+#   'check-challenge-expiry',
+#   '0 0 * * *',
+#   $$ select net.http_post(
+#     url := 'https://<project-ref>.supabase.co/functions/v1/check-challenge-expiry',
+#     headers := '{"Authorization": "Bearer <anon-key>"}'::jsonb
+#   ) $$
+# );
+#
+# -- 매시간: 조기 종료 투표 집계
+# select cron.schedule(
+#   'check-early-close',
+#   '0 * * * *',
+#   $$ select net.http_post(
+#     url := 'https://<project-ref>.supabase.co/functions/v1/check-early-close',
+#     headers := '{"Authorization": "Bearer <anon-key>"}'::jsonb
+#   ) $$
+# );

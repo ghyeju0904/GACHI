@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Plus, User } from 'lucide-react';
+import { Home, Plus, User, BarChart2 } from 'lucide-react';
 
 export function BottomNav() {
   return (
@@ -22,6 +22,11 @@ export function BottomNav() {
         <div className="fab-create">
           <Plus size={28} />
         </div>
+      </NavLink>
+
+      <NavLink to="/stats" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+        <BarChart2 size={24} />
+        <span>통계</span>
       </NavLink>
 
       <NavLink to="/profile" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
