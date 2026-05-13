@@ -14,8 +14,6 @@ import Profile from './pages/profile/Profile';
 import ProfileEdit from './pages/profile/ProfileEdit';
 import Notifications from './pages/notifications/Notifications';
 import ChallengeResult from './pages/result/ChallengeResult';
-import Stats from './pages/stats/Stats';
-
 function App() {
   return (
     <BrowserRouter>
@@ -37,7 +35,6 @@ function App() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/profile/edit" element={<ProfileEdit />} />
           <Route path="/notifications" element={<Notifications />} />
-          <Route path="/stats" element={<Stats />} />
         </Route>
       </Routes>
     </BrowserRouter>
