@@ -1,9 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Settings, ChevronLeft, ChevronRight, Flame, Users, Wallet, CheckCircle, Clock, X } from 'lucide-react';
+import { Settings, ChevronLeft, ChevronRight, Flame, Users, Coins, CheckCircle, Clock, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { getDeviceId } from '../../utils/deviceId';
+import { getProfileId } from '../../utils/getProfileId';
 import { logEvent } from '../../services/logger';
+
+const CATEGORY_LABEL = {
+  welcome:             '웰컴 포인트',
+  onboarding:          '온보딩 미션',
+  join:                '모임 참여',
+  challenge_complete:  '챌린지 완료 보상',
+  owner_evicted_refund:'모임장 퇴출 환불',
+  admin:               '운영진 지급',
+};
 
 /* ───────── 상수 ───────── */
 const KO_MONTHS  = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -42,6 +52,52 @@ export default function Profile() {
   const [ownedChallenges, setOwnedChallenges]  = useState([]);
   const [joinedChallenges, setJoinedChallenges] = useState([]);
   const [showLevelModal,  setShowLevelModal]   = useState(false);
+  const [points,          setPoints]           = useState(0);
+  const [pointTx,         setPointTx]          = useState([]);
+  const [completedChallenges, setCompletedChallenges] = useState([]);
+
+  useEffect(() => {
+    const loadPoints = async () => {
+      const profileId = await getProfileId();
+      if (!profileId) return;
+
+      const { data: profileRow } = await supabase.from('profiles').select('points').eq('id', profileId).single();
+      setPoints(profileRow?.points ?? 0);
+
+      const { data: tx } = await supabase
+        .from('point_transactions')
+        .select('*')
+        .eq('user_id', profileId)
+        .order('created_at', { ascending: false });
+      setPointTx(tx || []);
+
+      const { data: memberRows } = await supabase
+        .from('challenge_members')
+        .select('challenge_id, status, challenges(id, title, category, status)')
+        .eq('user_id', profileId);
+
+      const completed = (memberRows || [])
+        .filter((m) => m.challenges && (m.challenges.status === 'completed' || m.challenges.status === 'early_closed'))
+        .map((m) => m.challenges);
+      setCompletedChallenges(completed);
+    };
+    loadPoints();
+  }, []);
+
+  const pointsByCategory = useMemo(() => {
+    const map = {};
+    pointTx.forEach((t) => { map[t.category] = (map[t.category] || 0) + t.amount; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [pointTx]);
+
+  const completedByCategory = useMemo(() => {
+    const map = {};
+    completedChallenges.forEach((c) => {
+      if (!map[c.category]) map[c.category] = [];
+      map[c.category].push(c);
+    });
+    return Object.entries(map);
+  }, [completedChallenges]);
 
   useEffect(() => {
     logEvent('page_view', '/profile');
@@ -140,7 +196,6 @@ export default function Profile() {
               {ch.dDay   != null && <span>D-{ch.dDay}</span>}
               {ch.streak != null && <span>🔥 {ch.streak}일</span>}
               {ch.memberCount && <span style={{ display:'flex', alignItems:'center', gap:'2px' }}><Users size={11}/> {ch.memberCount}명</span>}
-              {ch.deposit != null && <span>💰 {ch.deposit.toLocaleString()}원</span>}
               {ch.startDate && <span>{ch.startDate} ~ {ch.endDate}</span>}
             </div>
           </div>
@@ -174,7 +229,12 @@ export default function Profile() {
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '2px 0 0' }}>{profile.bio}</p>
           </div>
         </div>
-        <Settings size={22} color="var(--text-muted)" style={{ cursor: 'pointer', flexShrink: 0 }} onClick={() => navigate('/profile/edit')} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div onClick={() => setMainTab('points')} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#FFF0EB', color: 'var(--primary)', padding: '6px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>
+            <Coins size={14} /> {points}P
+          </div>
+          <Settings size={22} color="var(--text-muted)" style={{ cursor: 'pointer', flexShrink: 0 }} onClick={() => navigate('/profile/edit')} />
+        </div>
       </header>
 
       {/* 챌리 레벨 카드 (클릭 시 레벨표 툴팁) */}
@@ -195,7 +255,7 @@ export default function Profile() {
 
       {/* 메인 탭 */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', background: 'white', padding: '0 20px', marginTop: '20px' }}>
-        {[['challenges', '챌린지'], ['growth', '성장 기록']].map(([key, label]) => (
+        {[['challenges', '챌린지'], ['growth', '성장 기록'], ['points', '포인트']].map(([key, label]) => (
           <button key={key} onClick={() => setMainTab(key)} style={{
             flex: 1, padding: '14px 0', border: 'none', background: 'none', cursor: 'pointer',
             fontSize: '14px', fontWeight: mainTab === key ? 'bold' : 'normal',
@@ -322,6 +382,67 @@ export default function Profile() {
                 <div style={{ width: '12px', height: '12px', borderRadius: '3px', border: '2px solid var(--primary)' }} /> 오늘
               </span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 포인트 탭 ── */}
+      {mainTab === 'points' && (
+        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+          {/* 잔액 카드 */}
+          <div style={{ background: 'var(--secondary)', borderRadius: '16px', padding: '24px', color: 'white', textAlign: 'center' }}>
+            <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)', marginBottom: '6px' }}>보유 포인트</div>
+            <div style={{ fontSize: '32px', fontWeight: 'bold', color: 'var(--primary)' }}>{points}P</div>
+            {points < 2 && (
+              <button disabled style={{ marginTop: '14px', padding: '10px 20px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', fontSize: '13px', fontWeight: 'bold', cursor: 'not-allowed' }}>
+                포인트 구매하기 (준비 중)
+              </button>
+            )}
+          </div>
+
+          {/* 카테고리별 합계 */}
+          <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: '1px solid var(--border-color)' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '12px' }}>카테고리별 포인트</h3>
+            {pointsByCategory.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>아직 내역이 없어요</p>
+            ) : pointsByCategory.map(([cat, sum]) => (
+              <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: '13px', borderBottom: '1px solid #F3F4F6' }}>
+                <span style={{ color: 'var(--text-muted)' }}>{CATEGORY_LABEL[cat] || cat}</span>
+                <span style={{ fontWeight: 'bold', color: sum >= 0 ? 'var(--primary)' : '#EF4444' }}>{sum >= 0 ? '+' : ''}{sum}P</span>
+              </div>
+            ))}
+          </div>
+
+          {/* 완료한 챌린지 기록 (카테고리별) */}
+          <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: '1px solid var(--border-color)' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '12px' }}>완료한 챌린지 기록</h3>
+            {completedByCategory.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>완료한 챌린지가 없어요</p>
+            ) : completedByCategory.map(([cat, list]) => (
+              <div key={cat} style={{ marginBottom: '10px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '4px' }}>{cat}</div>
+                {list.map((c) => (
+                  <div key={c.id} style={{ fontSize: '13px', padding: '6px 0', color: 'var(--text-main)' }}>{c.title}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          {/* 전체 내역 */}
+          <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: '1px solid var(--border-color)' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '12px' }}>전체 내역</h3>
+            {pointTx.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>내역이 없어요</p>
+            ) : pointTx.map((t) => (
+              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F3F4F6' }}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 'bold' }}>{t.description || CATEGORY_LABEL[t.category] || t.category}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{new Date(t.created_at).toLocaleDateString()}</div>
+                </div>
+                <span style={{ fontSize: '14px', fontWeight: 'bold', color: t.amount >= 0 ? 'var(--primary)' : '#EF4444' }}>{t.amount >= 0 ? '+' : ''}{t.amount}P</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

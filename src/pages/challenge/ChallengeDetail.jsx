@@ -1,11 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { ArrowLeft, Users, Clock, Flame, Wallet, ShieldCheck, X, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Users, Clock, ShieldCheck, X, CheckCircle, Star, Lock, Globe, Coins } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { logEvent } from '../../services/logger';
 import { supabase } from '../../services/supabase';
 import { getProfileId } from '../../utils/getProfileId';
+import { spendJoinFee } from '../../utils/points';
+import { grantOnboardingReward } from '../../utils/onboardingRewards';
 
 const CERTIFY_LABEL = { photo: '사진 인증', text: '텍스트 인증', check: '체크인' };
+const JOIN_FEE = 2;
 
 function getMemberStatus(members, maxMembers) {
   const ratio = members / maxMembers;
@@ -18,11 +21,13 @@ export default function ChallengeDetail() {
   const navigate = useNavigate();
   const { id }   = useParams();
 
-  const [showDepositModal, setShowDepositModal] = useState(false);
-  const [paying,           setPaying]           = useState(false);
-  const [paid,             setPaid]             = useState(false);
-  const [challenge,        setChallenge]        = useState(null);
-  const [loading,          setLoading]          = useState(true);
+  const [showJoinModal,   setShowJoinModal]   = useState(false);
+  const [joining,         setJoining]         = useState(false);
+  const [joined,          setJoined]          = useState(false);
+  const [joinError,       setJoinError]       = useState('');
+  const [challenge,       setChallenge]       = useState(null);
+  const [loading,         setLoading]         = useState(true);
+  const [isFavorite,      setIsFavorite]      = useState(false);
 
   useEffect(() => {
     logEvent('challenge_view', `/challenge/${id}`, { challenge_id: id });
@@ -37,9 +42,9 @@ export default function ChallengeDetail() {
       if (!error && data) {
         setChallenge({
           ...data,
-          maxMembers:  data.max_members,
-          certifyType: data.certify_type,
-          members:     0,
+          maxMembers:   data.max_members,
+          certifyTypes: data.certify_types || [],
+          members:      0,
         });
       } else {
         // localStorage 개설 챌린지 fallback
@@ -66,9 +71,7 @@ export default function ChallengeDetail() {
         .select('user_id, status, role')
         .eq('challenge_id', id);
 
-      const active = (data || []).filter(
-        (m) => m.status !== 'observer' && m.status !== 'kicked'
-      );
+      const active = (data || []).filter((m) => m.status !== 'kicked');
       setCurrentMembers(active.length);
 
       if (profileId) {
@@ -79,6 +82,14 @@ export default function ChallengeDetail() {
         } else {
           setAlreadyJoined(!!mine);
         }
+
+        const { data: fav } = await supabase
+          .from('favorites')
+          .select('user_id')
+          .eq('challenge_id', id)
+          .eq('user_id', profileId)
+          .maybeSingle();
+        setIsFavorite(!!fav);
       }
     };
     try {
@@ -115,24 +126,37 @@ export default function ChallengeDetail() {
 
   const memberStatus = getMemberStatus(currentMembers, challenge?.maxMembers || 30);
 
-  const handlePay = () => {
-    setPaying(true);
-    setTimeout(async () => {
-      // 강퇴 여부 재확인 (서버 기준)
+  const toggleFavorite = async () => {
+    const profileId = await getProfileId();
+    if (!profileId) return;
+    if (isFavorite) {
+      await supabase.from('favorites').delete().eq('user_id', profileId).eq('challenge_id', id);
+      setIsFavorite(false);
+    } else {
+      await supabase.from('favorites').upsert({ user_id: profileId, challenge_id: id }, { onConflict: 'user_id,challenge_id' });
+      setIsFavorite(true);
+      await grantOnboardingReward(profileId, 'favorite');
+    }
+  };
+
+  const handleJoin = () => {
+    setJoining(true);
+    (async () => {
       const profileId = await getProfileId();
-      if (profileId) {
-        const { data: myRow } = await supabase
-          .from('challenge_members')
-          .select('status')
-          .eq('challenge_id', id)
-          .eq('user_id', profileId)
-          .single();
-        if (myRow?.status === 'kicked') {
-          setPaying(false);
-          setShowDepositModal(false);
-          setWasKicked(true);
-          return;
-        }
+      if (!profileId) { setJoining(false); return; }
+
+      // 강퇴 여부 재확인 (서버 기준)
+      const { data: myRow } = await supabase
+        .from('challenge_members')
+        .select('status')
+        .eq('challenge_id', id)
+        .eq('user_id', profileId)
+        .single();
+      if (myRow?.status === 'kicked') {
+        setJoining(false);
+        setShowJoinModal(false);
+        setWasKicked(true);
+        return;
       }
 
       // 실시간 인원 재확인 (동시 참여 방지)
@@ -140,14 +164,22 @@ export default function ChallengeDetail() {
         .from('challenge_members')
         .select('*', { count: 'exact', head: true })
         .eq('challenge_id', id)
-        .not('status', 'in', '(observer,kicked)');
+        .not('status', 'eq', 'kicked');
 
       const maxM = challenge.max_members || challenge.maxMembers || 30;
       if (count >= maxM) {
-        setPaying(false);
-        setShowDepositModal(false);
-        alert('참여 인원이 가득 찼어요.');
+        setJoining(false);
+        setShowJoinModal(false);
+        setJoinError('참여 인원이 가득 찼어요.');
         setCurrentMembers(count);
+        return;
+      }
+
+      // 포인트 차감 (2P)
+      const { error: spendError } = await spendJoinFee(profileId, id, `'${challenge.title}' 챌린지 참여`);
+      if (spendError) {
+        setJoining(false);
+        setJoinError('포인트가 부족해요. 마이페이지에서 포인트를 확인해주세요.');
         return;
       }
 
@@ -164,7 +196,6 @@ export default function ChallengeDetail() {
         id:        id,
         title:     challenge.title,
         category:  challenge.category,
-        deposit:   challenge.deposit,
         dDay:      daysTotal,
         streak:    0,
         role:      'member',
@@ -178,27 +209,24 @@ export default function ChallengeDetail() {
       }
 
       // 2. Supabase challenge_members 저장 (디바이스 간 공유)
-      try {
-        const profileId = await getProfileId();
-        if (profileId) {
-          await supabase.from('challenge_members').upsert({
-            challenge_id: id,
-            user_id:      profileId,
-            role:         'member',
-            status:       'active',
-            joined_at:    new Date().toISOString(),
-          }, { onConflict: 'challenge_id,user_id' });
-        }
-      } catch {}
+      await supabase.from('challenge_members').upsert({
+        challenge_id: id,
+        user_id:      profileId,
+        role:         'member',
+        status:       'active',
+        joined_at:    new Date().toISOString(),
+      }, { onConflict: 'challenge_id,user_id' });
 
-      logEvent('challenge_join', `/challenge/${id}`, { challenge_id: id, deposit: challenge.deposit });
-      setPaying(false);
-      setPaid(true);
+      await grantOnboardingReward(profileId, 'joined');
+
+      logEvent('challenge_join', `/challenge/${id}`, { challenge_id: id });
+      setJoining(false);
+      setJoined(true);
       setTimeout(() => {
-        setShowDepositModal(false);
+        setShowJoinModal(false);
         navigate(`/feed/${id}`);
-      }, 1000);
-    }, 1200);
+      }, 800);
+    })();
   };
 
   if (loading) return (
@@ -238,11 +266,16 @@ export default function ChallengeDetail() {
     );
   }
 
+  const certifyTypes = challenge.certifyTypes || challenge.certify_types || [];
+
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', paddingBottom: '160px' }}>
 
       <div style={{ height: '200px', background: 'linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%)', position: 'relative' }}>
         <ArrowLeft size={28} color="white" style={{ position: 'absolute', top: '16px', left: '16px', cursor: 'pointer' }} onClick={() => navigate(-1)} />
+        <button onClick={toggleFavorite} style={{ position: 'absolute', top: '16px', right: '16px', background: 'rgba(0,0,0,0.25)', border: 'none', borderRadius: '50%', padding: '8px', cursor: 'pointer', display: 'flex' }}>
+          <Star size={20} color={isFavorite ? '#FFD700' : 'white'} fill={isFavorite ? '#FFD700' : 'none'} />
+        </button>
       </div>
 
       <div style={{ padding: '20px', marginTop: '-40px', position: 'relative', zIndex: 1 }}>
@@ -250,8 +283,14 @@ export default function ChallengeDetail() {
         {/* 기본 정보 카드 */}
         <div style={{ background: 'white', borderRadius: '16px', padding: '24px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border-color)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <div style={{ display: 'inline-block', padding: '4px 10px', background: '#FFF0EB', color: 'var(--primary)', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold' }}>
-              {challenge.category}
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <span style={{ display: 'inline-block', padding: '4px 10px', background: '#FFF0EB', color: 'var(--primary)', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold' }}>
+                {challenge.category}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '4px 10px', background: '#F3F4F6', color: 'var(--text-muted)', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold' }}>
+                {challenge.is_public === false ? <Lock size={11} /> : <Globe size={11} />}
+                {challenge.is_public === false ? '비공개' : '공개'}
+              </span>
             </div>
             <span style={{ fontSize: '12px', fontWeight: 'bold', color: memberStatus.textColor, background: memberStatus.bgColor, padding: '4px 10px', borderRadius: '20px' }}>
               {memberStatus.label}
@@ -264,7 +303,7 @@ export default function ChallengeDetail() {
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Users size={16} /> {currentMembers}/{challenge.maxMembers || challenge.max_members}명</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ShieldCheck size={16} /> {CERTIFY_LABEL[challenge.certifyType] || challenge.certifyType}
+              <ShieldCheck size={16} /> {certifyTypes.map((t) => CERTIFY_LABEL[t] || t).join(' · ')}
             </span>
           </div>
           <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-color)' }}>
@@ -273,34 +312,17 @@ export default function ChallengeDetail() {
           </div>
         </div>
 
-        {/* 보증금 안내 */}
+        {/* 참여 비용 안내 */}
         <div style={{ marginTop: '16px', background: '#FFF0EB', borderRadius: '16px', padding: '20px', border: '1px solid #FFD4C8' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-            <Wallet size={18} color="var(--primary)" />
-            <span style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--primary)' }}>참가 보증금</span>
+            <Coins size={18} color="var(--primary)" />
+            <span style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--primary)' }}>참여 비용</span>
           </div>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>{challenge.deposit?.toLocaleString()}원</div>
+          <div style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>{JOIN_FEE}P</div>
           <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.8 }}>
-            · 챌린지 성공 시 <strong style={{ color: 'var(--text-main)' }}>전액 환급</strong><br />
-            · 실패 또는 중도 포기 시 <strong style={{ color: 'var(--text-main)' }}>미환급</strong><br />
-            · 참여자 투표 과반 미달 인증은 실패 처리
-          </div>
-        </div>
-
-        {/* 멤버 미리보기 */}
-        <div style={{ marginTop: '24px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Flame size={18} color="var(--primary)" /> 열정 멤버 ({challenge.members}명)
-          </h3>
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px' }}>
-            {Array.from({ length: Math.min(6, challenge.members || 0) }).map((_, i) => (
-              <div key={i} style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', flexShrink: 0 }}>😀</div>
-            ))}
-            {(challenge.members || 0) > 6 && (
-              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#FFF0EB', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', flexShrink: 0 }}>
-                +{(challenge.members || 0) - 6}
-              </div>
-            )}
+            · 참여 시 포인트 {JOIN_FEE}점이 소모돼요<br />
+            · 중도 자진 탈퇴 시 <strong style={{ color: 'var(--text-main)' }}>환급되지 않아요</strong><br />
+            · 챌린지 완료 시 경고 횟수에 따라 포인트를 보상으로 받아요
           </div>
         </div>
       </div>
@@ -318,36 +340,39 @@ export default function ChallengeDetail() {
           </button>
         ) : (
           <>
+            {joinError && (
+              <div style={{ fontSize: '12px', color: '#EF4444', textAlign: 'center', marginBottom: '8px', fontWeight: 'bold' }}>{joinError}</div>
+            )}
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', marginBottom: '8px' }}>
-              참여 시 보증금 <strong style={{ color: 'var(--primary)' }}>{challenge.deposit?.toLocaleString()}원</strong> 결제 후 합류
+              참여 시 포인트 <strong style={{ color: 'var(--primary)' }}>{JOIN_FEE}P</strong> 차감 후 합류
             </div>
             <button
-              onClick={() => currentMembers >= (challenge.max_members || challenge.maxMembers) ? null : setShowDepositModal(true)}
+              onClick={() => currentMembers >= (challenge.max_members || challenge.maxMembers) ? null : setShowJoinModal(true)}
               disabled={currentMembers >= (challenge.max_members || challenge.maxMembers)}
               style={{ width: '100%', padding: '16px', background: currentMembers >= (challenge.max_members || challenge.maxMembers) ? '#E5E7EB' : 'var(--primary)', color: currentMembers >= (challenge.max_members || challenge.maxMembers) ? 'var(--text-muted)' : 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: currentMembers >= (challenge.max_members || challenge.maxMembers) ? 'not-allowed' : 'pointer' }}>
-              {currentMembers >= (challenge.max_members || challenge.maxMembers) ? '멤버 마감' : '보증금 납부하고 참여하기'}
+              {currentMembers >= (challenge.max_members || challenge.maxMembers) ? '멤버 마감' : '포인트로 참여하기'}
             </button>
           </>
         )}
       </div>
 
-      {/* 보증금 납부 바텀시트 */}
-      {showDepositModal && (
-        <div onClick={() => !paying && setShowDepositModal(false)}
+      {/* 참여 확인 바텀시트 */}
+      {showJoinModal && (
+        <div onClick={() => !joining && setShowJoinModal(false)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'flex-end' }}>
           <div onClick={(e) => e.stopPropagation()}
             style={{ width: '100%', background: 'white', borderRadius: '20px 20px 0 0', padding: '24px 20px 40px', maxWidth: '480px', margin: '0 auto' }}>
             <div style={{ width: '40px', height: '4px', background: '#E5E7EB', borderRadius: '2px', margin: '0 auto 24px' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0 }}>보증금 납부 확인</h3>
-              {!paying && <X size={24} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowDepositModal(false)} />}
+              <h3 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0 }}>참여 확인</h3>
+              {!joining && <X size={24} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowJoinModal(false)} />}
             </div>
 
             <div style={{ background: '#F8F9FA', borderRadius: '12px', padding: '20px', marginBottom: '16px' }}>
               {[
                 ['챌린지', challenge.title],
                 ['기간', typeof challenge.duration === 'number' ? `${challenge.duration}일` : challenge.duration],
-                ['인증 방식', CERTIFY_LABEL[challenge.certifyType] || challenge.certifyType],
+                ['인증 방식', certifyTypes.map((t) => CERTIFY_LABEL[t] || t).join(' · ')],
               ].map(([label, val]) => (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '14px' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{label}</span>
@@ -355,23 +380,23 @@ export default function ChallengeDetail() {
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid var(--border-color)', fontSize: '16px' }}>
-                <span style={{ fontWeight: 'bold' }}>납부 금액</span>
-                <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{challenge.deposit?.toLocaleString()}원</span>
+                <span style={{ fontWeight: 'bold' }}>차감 포인트</span>
+                <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{JOIN_FEE}P</span>
               </div>
             </div>
 
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: 1.6 }}>
-              챌린지 성공 시 전액 환급됩니다. 참여자 투표 과반 미달 인증은 실패 처리됩니다.
+              중도 자진 탈퇴 시 참여 포인트는 환급되지 않아요.
             </p>
 
-            {paid ? (
+            {joined ? (
               <div style={{ padding: '16px', background: '#ECFDF5', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#10B981', fontWeight: 'bold', fontSize: '16px' }}>
-                <CheckCircle size={20} /> 결제 완료! 챌린지에 합류했어요
+                <CheckCircle size={20} /> 참여 완료! 챌린지에 합류했어요
               </div>
             ) : (
-              <button onClick={handlePay} disabled={paying}
-                style={{ width: '100%', padding: '16px', background: paying ? '#93C5FD' : '#0064FF', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: paying ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {paying ? '토스페이 처리 중…' : '토스페이로 납부하기'}
+              <button onClick={handleJoin} disabled={joining}
+                style={{ width: '100%', padding: '16px', background: joining ? '#FFB199' : 'var(--primary)', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: joining ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                {joining ? '처리 중…' : `${JOIN_FEE}P 사용하고 참여하기`}
               </button>
             )}
           </div>

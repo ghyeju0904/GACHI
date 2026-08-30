@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Wallet, ShieldCheck, Minus, Plus, ChevronLeft, ChevronRight, CalendarDays, Shuffle } from 'lucide-react';
+import { Camera, Edit3, CheckSquare, ChevronLeft, CalendarDays, Shuffle, Lock, Globe } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { getProfileId } from '../../utils/getProfileId';
+import { spendJoinFee } from '../../utils/points';
+import { grantOnboardingReward } from '../../utils/onboardingRewards';
 
 /* ───────── 상수 ───────── */
 const CATEGORIES = [
@@ -27,11 +29,12 @@ function getRandomTitle(category) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-const DEPOSIT_OPTIONS  = [5000, 10000, 20000, 50000];
 const CERTIFY_TYPES    = [{ id: 'photo', label: '사진 인증' }, { id: 'text', label: '텍스트 인증' }, { id: 'check', label: '체크인' }];
 const DAY_TYPE_OPTIONS = [{ id: 'weekday', label: '평일' }, { id: 'weekend', label: '주말' }, { id: 'all', label: '평일 및 주말' }];
 const DURATION_PRESETS = [{ label: '7일', days: 7 }, { label: '14일', days: 14 }, { label: '21일', days: 21 }, { label: '30일', days: 30 }];
-const STEP_LABELS = ['카테고리', '제목', '기간', '인원', '보증금', '인증 방식'];
+const STEP_LABELS = ['카테고리', '제목', '기간', '인원', '공개·인증'];
+const MAX_ACTIVE_PER_CATEGORY = 2;
+const JOIN_FEE = 2;
 
 /* ───────── 유틸 ───────── */
 function toDateString(date) {
@@ -62,11 +65,12 @@ export default function ChallengeCreate() {
   const [dayType,      setDayType]       = useState('all');
   const [excludeHoliday, setExcludeHoliday] = useState(false);
   const [memberCount,  setMemberCount]   = useState('2'); // 문자열로 관리 — 빈 칸 허용
-  const [deposit,           setDeposit]           = useState(10000);
-  const [certifyType,       setCertifyType]       = useState('photo');
+  const [isPublic,          setIsPublic]          = useState(true);
+  const [certifyTypes,      setCertifyTypes]      = useState(['photo']);
   const [recruitDays,       setRecruitDays]       = useState(3);
   const [description,       setDescription]       = useState('');
-  const [ownerParticipates, setOwnerParticipates] = useState(true);
+  const [submitting,        setSubmitting]        = useState(false);
+  const [errorMsg,          setErrorMsg]          = useState('');
 
   /* 스텝 상태 */
   const [step,      setStep]      = useState(0);
@@ -78,8 +82,7 @@ export default function ChallengeCreate() {
     title.trim() !== '',                      // 1: 제목
     !!startDate && !!endDate && endDate >= startDate, // 2: 기간
     parseInt(memberCount) >= 2 && parseInt(memberCount) <= 30, // 3: 인원
-    deposit > 0,                              // 4: 보증금 (항상 유효)
-    certifyType !== '',                       // 5: 인증방식 (항상 유효)
+    certifyTypes.length > 0,                  // 4: 공개설정+인증방식
   ];
 
   const go = (dir) => {
@@ -101,11 +104,128 @@ export default function ChallengeCreate() {
     setEndDate(end);
   };
 
+  const toggleCertifyType = (id) => {
+    setCertifyTypes((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  };
+
   /* 관심사 카테고리 우선 정렬 */
   const sortedCats = [
     ...CATEGORIES.filter((c) => userInterests.includes(c)),
     ...CATEGORIES.filter((c) => !userInterests.includes(c)),
   ];
+
+  const handleSubmit = async () => {
+    setErrorMsg('');
+    setSubmitting(true);
+    try {
+      const profileId = await getProfileId();
+      if (!profileId) { setErrorMsg('프로필을 불러오지 못했어요.'); setSubmitting(false); return; }
+
+      // 모임장 퇴출 누적 패널티로 인한 개설 제한 확인
+      const { data: myProfile } = await supabase
+        .from('profiles')
+        .select('points, owner_restricted_until')
+        .eq('id', profileId)
+        .single();
+
+      if (myProfile?.owner_restricted_until && myProfile.owner_restricted_until >= today) {
+        setErrorMsg(`모임장 퇴출 이력으로 ${myProfile.owner_restricted_until}까지 모임을 개설할 수 없어요.`);
+        setSubmitting(false);
+        return;
+      }
+
+      if ((myProfile?.points ?? 0) < JOIN_FEE) {
+        setErrorMsg('포인트가 부족해요. 모임 개설도 참여로 간주되어 2P가 필요해요.');
+        setSubmitting(false);
+        return;
+      }
+
+      // 주제별 동시 개설 제한 (최대 2개)
+      const { count: activeSameCategory } = await supabase
+        .from('challenges')
+        .select('*', { count: 'exact', head: true })
+        .eq('category', category)
+        .eq('status', 'active');
+
+      if ((activeSameCategory ?? 0) >= MAX_ACTIVE_PER_CATEGORY) {
+        setErrorMsg(`'${category}' 주제는 이미 개설된 모임이 ${MAX_ACTIVE_PER_CATEGORY}개 있어요. 기존 모임이 마감된 후 다시 시도해주세요.`);
+        setSubmitting(false);
+        return;
+      }
+
+      const durationDays = Math.round(
+        (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)
+      ) + 1;
+
+      const { data: sbData, error } = await supabase
+        .from('challenges')
+        .insert({
+          title,
+          category,
+          description:          description.trim() || null,
+          duration:             durationDays,
+          max_members:          parseInt(memberCount) || 2,
+          certify_types:        certifyTypes,
+          is_public:            isPublic,
+          day_type:             dayType,
+          exclude_holiday:      excludeHoliday,
+          status:               'active',
+          recruitment_end_date: addDays(today, recruitDays),
+          created_by:           profileId,
+        })
+        .select()
+        .single();
+
+      if (error || !sbData) {
+        setErrorMsg('챌린지 개설에 실패했어요. 잠시 후 다시 시도해주세요.');
+        setSubmitting(false);
+        return;
+      }
+
+      const challengeId = sbData.id;
+
+      // 모임장은 항상 참여자로 등록
+      await supabase.from('challenge_members').insert({
+        challenge_id: challengeId,
+        user_id:      profileId,
+        role:         'owner',
+        status:       'active',
+      });
+
+      // 참여 포인트 2P 차감 (모임장 포함)
+      const { error: spendError } = await spendJoinFee(profileId, challengeId, `'${title}' 모임 개설 참여`);
+      if (spendError) {
+        // 포인트 부족 등으로 실패하면 방금 만든 챌린지를 되돌린다
+        await supabase.from('challenges').delete().eq('id', challengeId);
+        setErrorMsg('포인트가 부족해 개설을 완료하지 못했어요.');
+        setSubmitting(false);
+        return;
+      }
+
+      await grantOnboardingReward(profileId, 'created');
+
+      // localStorage에도 저장 (내 챌린지 표시용)
+      const newChallenge = {
+        id:          challengeId,
+        title, category,
+        duration:    `${startDate} ~ ${endDate}`,
+        startDate, endDate, dayType, excludeHoliday,
+        memberCount: parseInt(memberCount) || 2,
+        certifyTypes, isPublic,
+        createdAt:   new Date().toISOString(),
+        role:        'owner',
+      };
+      const prev = JSON.parse(localStorage.getItem('my_challenges') || '[]');
+      localStorage.setItem('my_challenges', JSON.stringify([newChallenge, ...prev]));
+      navigate('/profile');
+    } catch {
+      setErrorMsg('알 수 없는 오류가 발생했어요.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   /* ── 스텝 콘텐츠 정의 ── */
   const stepContent = [
@@ -277,10 +397,10 @@ export default function ChallengeCreate() {
     /* 3: 인원 */
     <div key="member">
       <h2 style={s.stepTitle}>몇 명이서 할까요?</h2>
-      <p style={s.stepDesc}>최소 2명, 최대 30명까지 설정할 수 있어요</p>
+      <p style={s.stepDesc}>모임장 포함 최소 2명, 최대 30명까지 설정할 수 있어요</p>
       <div style={{ marginTop: '48px', display: 'flex', alignItems: 'center', gap: '16px', justifyContent: 'center' }}>
         <button onClick={() => setMemberCount((v) => String(Math.max(2, (parseInt(v) || 2) - 1)))} style={s.roundBtn}>
-          <Minus size={22} color="var(--text-main)" />
+          <span style={{ fontSize: '20px', color: 'var(--text-main)' }}>−</span>
         </button>
         <input
           type="number" min={2} max={30}
@@ -289,80 +409,69 @@ export default function ChallengeCreate() {
           style={{ width: '120px', textAlign: 'center', padding: '16px', borderRadius: '12px', border: '1.5px solid var(--border-color)', fontSize: '32px', fontWeight: 'bold', color: 'var(--primary)', outline: 'none' }}
         />
         <button onClick={() => setMemberCount((v) => String(Math.min(30, (parseInt(v) || 1) + 1)))} style={{ ...s.roundBtn, background: 'var(--primary)', border: 'none' }}>
-          <Plus size={22} color="white" />
+          <span style={{ fontSize: '20px', color: 'white' }}>+</span>
         </button>
       </div>
       <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '14px', color: 'var(--text-muted)' }}>
-        명 참여 가능{ownerParticipates ? ' (운영자 포함)' : ''}
+        명 참여 가능 (모임장 포함)
       </p>
+      <div style={{ marginTop: '28px', padding: '16px', background: '#FFF0EB', borderRadius: '12px', fontSize: '13px', color: 'var(--primary)', textAlign: 'center', fontWeight: 'bold' }}>
+        모임 참여 시 {JOIN_FEE}P가 소모돼요 (모임장 포함)
+      </div>
+    </div>,
 
-      {/* 운영자 참여 여부 */}
-      <div style={{ marginTop: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#F8F9FA', borderRadius: '12px' }}>
-        <div>
-          <div style={{ fontSize: '14px', fontWeight: 'bold' }}>운영자(나)도 참여할게요</div>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-            {ownerParticipates ? '참여 인원에 운영자가 포함됩니다' : '운영자는 관리자 역할만 합니다'}
-          </div>
+    /* 4: 공개설정 + 인증 방식 */
+    <div key="settings">
+      <h2 style={s.stepTitle}>공개 범위와 인증 방식을 정해주세요</h2>
+      <p style={s.stepDesc}>인증 방식은 여러 개 선택할 수 있어요</p>
+
+      <div style={{ marginTop: '24px' }}>
+        <p style={s.fieldLabel}>모임 유형</p>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => setIsPublic(true)} style={{
+            flex: 1, padding: '14px 0', borderRadius: '10px', cursor: 'pointer',
+            border: `1.5px solid ${isPublic ? 'var(--primary)' : 'var(--border-color)'}`,
+            background: isPublic ? '#FFF0EB' : 'white',
+            color: isPublic ? 'var(--primary)' : 'var(--text-main)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            fontSize: '14px', fontWeight: isPublic ? 'bold' : 'normal',
+          }}><Globe size={16} /> 공개 모임</button>
+          <button onClick={() => setIsPublic(false)} style={{
+            flex: 1, padding: '14px 0', borderRadius: '10px', cursor: 'pointer',
+            border: `1.5px solid ${!isPublic ? 'var(--primary)' : 'var(--border-color)'}`,
+            background: !isPublic ? '#FFF0EB' : 'white',
+            color: !isPublic ? 'var(--primary)' : 'var(--text-main)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            fontSize: '14px', fontWeight: !isPublic ? 'bold' : 'normal',
+          }}><Lock size={16} /> 비공개 모임</button>
         </div>
-        <button onClick={() => setOwnerParticipates((v) => !v)} style={{
-          width: '52px', height: '28px', borderRadius: '14px', border: 'none', cursor: 'pointer',
-          background: ownerParticipates ? 'var(--primary)' : '#D1D5DB',
-          position: 'relative', transition: 'background 0.2s', flexShrink: 0,
-        }}>
-          <span style={{
-            position: 'absolute', top: '3px',
-            left: ownerParticipates ? '27px' : '3px',
-            width: '22px', height: '22px', borderRadius: '50%', background: 'white',
-            transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
-          }} />
-        </button>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+          {isPublic ? '누구나 참여할 수 있어요' : '접근이 제한된 모임이에요'}
+        </p>
       </div>
-    </div>,
 
-    /* 4: 보증금 */
-    <div key="deposit">
-      <h2 style={s.stepTitle}>참가 보증금을 설정해주세요</h2>
-      <p style={s.stepDesc}>챌린지 성공 시 전액 환급 · 실패 시 미환급</p>
-      <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {DEPOSIT_OPTIONS.map((amount) => (
-          <button key={amount} onClick={() => setDeposit(amount)} style={{
-            padding: '18px', borderRadius: '12px', cursor: 'pointer', textAlign: 'left',
-            border: `1.5px solid ${deposit === amount ? 'var(--primary)' : 'var(--border-color)'}`,
-            background: deposit === amount ? '#FFF0EB' : 'white',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          }}>
-            <span style={{ fontSize: '18px', fontWeight: 'bold', color: deposit === amount ? 'var(--primary)' : 'var(--text-main)' }}>
-              {amount.toLocaleString()}원
-            </span>
-            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              전체 풀 {(amount * (parseInt(memberCount) || 0)).toLocaleString()}원
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>,
-
-    /* 5: 인증 방식 */
-    <div key="certify">
-      <h2 style={s.stepTitle}>인증 방식을 선택해주세요</h2>
-      <p style={s.stepDesc}>참여자들이 이 방식으로만 인증할 수 있어요</p>
-      <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {CERTIFY_TYPES.map((type) => (
-          <button key={type.id} onClick={() => setCertifyType(type.id)} style={{
-            padding: '20px', borderRadius: '12px', cursor: 'pointer', textAlign: 'left',
-            border: `1.5px solid ${certifyType === type.id ? 'var(--primary)' : 'var(--border-color)'}`,
-            background: certifyType === type.id ? '#FFF0EB' : 'white',
-          }}>
-            <div style={{ fontSize: '16px', fontWeight: 'bold', color: certifyType === type.id ? 'var(--primary)' : 'var(--text-main)', marginBottom: '4px' }}>
-              {type.label}
-            </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              {type.id === 'photo'  && '사진을 업로드하여 인증 · 참여자 투표로 확정'}
-              {type.id === 'text'   && '텍스트로 인증 내용 작성 · 참여자 투표로 확정'}
-              {type.id === 'check'  && '단순 체크인으로 즉시 인증 완료'}
-            </div>
-          </button>
-        ))}
+      <div style={{ marginTop: '28px' }}>
+        <p style={s.fieldLabel}>인증 방식 (복수 선택 가능)</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {CERTIFY_TYPES.map((type) => {
+            const selected = certifyTypes.includes(type.id);
+            return (
+              <button key={type.id} onClick={() => toggleCertifyType(type.id)} style={{
+                padding: '20px', borderRadius: '12px', cursor: 'pointer', textAlign: 'left',
+                border: `1.5px solid ${selected ? 'var(--primary)' : 'var(--border-color)'}`,
+                background: selected ? '#FFF0EB' : 'white',
+                display: 'flex', alignItems: 'center', gap: '12px',
+              }}>
+                {type.id === 'photo' && <Camera size={20} color={selected ? 'var(--primary)' : 'var(--text-muted)'} />}
+                {type.id === 'text'  && <Edit3 size={20} color={selected ? 'var(--primary)' : 'var(--text-muted)'} />}
+                {type.id === 'check' && <CheckSquare size={20} color={selected ? 'var(--primary)' : 'var(--text-muted)'} />}
+                <div style={{ fontSize: '16px', fontWeight: 'bold', color: selected ? 'var(--primary)' : 'var(--text-main)' }}>
+                  {type.label}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>,
   ];
@@ -414,6 +523,11 @@ export default function ChallengeCreate() {
         >
           {stepContent[step]}
         </div>
+        {errorMsg && (
+          <div style={{ marginTop: '16px', padding: '12px 16px', background: '#FEF2F2', border: '1px solid #FFD4C8', borderRadius: '10px', fontSize: '13px', color: '#EF4444', fontWeight: 'bold' }}>
+            {errorMsg}
+          </div>
+        )}
       </div>
 
       {/* 하단 고정 이전/다음 */}
@@ -431,78 +545,18 @@ export default function ChallengeCreate() {
           </button>
         )}
         <button
-          onClick={async () => {
-            if (step === STEP_LABELS.length - 1) {
-              const durationDays = Math.round(
-                (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)
-              ) + 1;
-
-              // Supabase에 저장
-              let supabaseId = null;
-              const { data: sbData, error } = await supabase
-                .from('challenges')
-                .insert({
-                  title,
-                  category,
-                  description:           description.trim() || null,
-                  duration:              durationDays,
-                  max_members:           parseInt(memberCount) || 2,
-                  deposit,
-                  certify_type:          certifyType,
-                  status:                'active',
-                  recruitment_end_date:  addDays(today, recruitDays),
-                  owner_participates:    ownerParticipates,
-                })
-                .select()
-                .single();
-
-              if (!error && sbData) supabaseId = sbData.id;
-              else console.error('챌린지 저장 실패:', error);
-
-              // challenge_members에 owner로 저장
-              if (supabaseId) {
-                try {
-                  const profileId = await getProfileId();
-                  if (profileId) {
-                    await supabase.from('challenge_members').insert({
-                      challenge_id: supabaseId,
-                      user_id:      profileId,
-                      role:         'owner',
-                      status:       ownerParticipates ? 'active' : 'observer',
-                    });
-                  }
-                } catch {}
-              }
-
-              // localStorage에도 저장 (내 챌린지 표시용)
-              const newChallenge = {
-                id:          supabaseId || Date.now(),
-                title, category,
-                duration:    `${startDate} ~ ${endDate}`,
-                startDate, endDate, dayType, excludeHoliday,
-                memberCount: parseInt(memberCount) || 2,
-                deposit,     certifyType,
-                createdAt:   new Date().toISOString(),
-                role:        'owner',
-              };
-              const prev = JSON.parse(localStorage.getItem('my_challenges') || '[]');
-              localStorage.setItem('my_challenges', JSON.stringify([newChallenge, ...prev]));
-              navigate('/profile');
-            } else {
-              go(1);
-            }
-          }}
-          disabled={!canNext[step]}
+          onClick={() => step === STEP_LABELS.length - 1 ? handleSubmit() : go(1)}
+          disabled={!canNext[step] || submitting}
           style={{
             flex: step > 0 ? 2 : 1, padding: '16px', borderRadius: '12px', border: 'none',
-            background: canNext[step] ? 'var(--primary)' : '#E5E7EB',
-            color: canNext[step] ? 'white' : 'var(--text-muted)',
+            background: (canNext[step] && !submitting) ? 'var(--primary)' : '#E5E7EB',
+            color: (canNext[step] && !submitting) ? 'white' : 'var(--text-muted)',
             fontSize: '16px', fontWeight: 'bold',
-            cursor: canNext[step] ? 'pointer' : 'not-allowed',
+            cursor: (canNext[step] && !submitting) ? 'pointer' : 'not-allowed',
             transition: 'background 0.2s',
           }}
         >
-          {step === STEP_LABELS.length - 1 ? '개설 완료하기' : '다음'}
+          {step === STEP_LABELS.length - 1 ? (submitting ? '개설 중...' : '개설 완료하기') : '다음'}
         </button>
       </div>
 

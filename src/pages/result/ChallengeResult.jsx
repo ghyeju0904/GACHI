@@ -1,45 +1,79 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Flame, Trophy, Wallet, ThumbsUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Trophy, Coins, ShieldAlert } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { supabase } from '../../services/supabase';
+import { awardPoints } from '../../utils/points';
+
+const REWARD_TABLE = [
+  { max: 0, points: 5, label: '경고 0회 · 완료' },
+  { max: 1, points: 3, label: '경고 1회 · 완료' },
+  { max: 2, points: 2, label: '경고 2회 · 완료' },
+];
+
+function rewardFor(warningCount) {
+  const tier = REWARD_TABLE.find((t) => warningCount <= t.max);
+  return tier || { points: 0, label: '경고 3회 · 퇴출' };
+}
 
 export default function ChallengeResult() {
   const navigate = useNavigate();
   const { id } = useParams();
 
-  const challenge = {
-    title: '하루 1시간 바이브코딩 완료하기',
-    duration: '30일',
-    deposit: 10000,
-    totalMembers: 12,
-  };
+  const [challenge, setChallenge] = useState(null);
+  const [members,   setMembers]   = useState([]);
+  const [loading,   setLoading]   = useState(true);
 
-  const [members, setMembers] = useState([
-    { id: 1, username: '김직장인', avatar: '🐰', successDays: 28, totalDays: 30, status: 'success', passionVote: 0, myVoted: false },
-    { id: 2, username: '이대학원', avatar: '🐻', successDays: 30, totalDays: 30, status: 'success', passionVote: 0, myVoted: false },
-    { id: 3, username: '박스타트업', avatar: '🦊', successDays: 15, totalDays: 30, status: 'fail', passionVote: 0, myVoted: false },
-    { id: 4, username: '최직장인', avatar: '🐯', successDays: 29, totalDays: 30, status: 'success', passionVote: 0, myVoted: false },
-  ]);
+  useEffect(() => {
+    const load = async () => {
+      const [{ data: ch }, { data: mems }, { data: certs }] = await Promise.all([
+        supabase.from('challenges').select('*').eq('id', id).single(),
+        supabase.from('challenge_members').select('*, profiles(avatar, nickname)').eq('challenge_id', id),
+        supabase.from('certifications').select('user_id').eq('challenge_id', id),
+      ]);
 
-  const [refundDone, setRefundDone] = useState(false);
-  const [passionVoteDone, setPassionVoteDone] = useState(false);
+      setChallenge(ch);
 
-  const successMembers = members.filter((m) => m.status === 'success');
-  const failMembers = members.filter((m) => m.status === 'fail');
-  const totalPool = challenge.deposit * challenge.totalMembers;
-  const refundPerPerson = successMembers.length > 0
-    ? Math.floor(totalPool / successMembers.length)
-    : 0;
+      const certCountByUser = {};
+      (certs || []).forEach((c) => { certCountByUser[c.user_id] = (certCountByUser[c.user_id] || 0) + 1; });
 
-  const handlePassionVote = (memberId) => {
-    setMembers((prev) =>
-      prev.map((m) => {
-        if (m.id !== memberId || m.myVoted) return m;
-        return { ...m, passionVote: m.passionVote + 1, myVoted: true };
-      })
-    );
-  };
+      const memberList = (mems || []).map((m) => ({
+        ...m,
+        certCount: certCountByUser[m.user_id] || 0,
+        reward: rewardFor(m.warning_count || 0),
+      }));
+      setMembers(memberList);
 
-  const allVoted = members.every((m) => m.myVoted || m.status === 'fail');
+      // 완료된 챌린지 최초 조회 시 보상 포인트를 1회 지급
+      if (ch && (ch.status === 'completed' || ch.status === 'early_closed')) {
+        for (const m of memberList) {
+          if (m.status === 'active' && !m.reward_claimed && m.reward.points > 0) {
+            await awardPoints(m.user_id, m.reward.points, 'challenge_complete', `'${ch.title}' 챌린지 완료 보상 (${m.reward.label})`, ch.id);
+            await supabase.from('challenge_members').update({ reward_claimed: true }).eq('challenge_id', id).eq('user_id', m.user_id);
+          }
+        }
+      }
+
+      setLoading(false);
+    };
+    load();
+  }, [id]);
+
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#F8F9FA' }}>
+      <p style={{ color: 'var(--text-muted)' }}>불러오는 중...</p>
+    </div>
+  );
+
+  if (!challenge) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#F8F9FA' }}>
+      <p style={{ color: 'var(--text-muted)' }}>챌린지를 찾을 수 없어요</p>
+    </div>
+  );
+
+  const activeMembers  = members.filter((m) => m.status === 'active');
+  const kickedMembers  = members.filter((m) => m.status === 'kicked');
+  const gaveUpMembers  = members.filter((m) => m.status === 'gave_up');
+  const ranking = [...activeMembers].sort((a, b) => b.certCount - a.certCount);
 
   return (
     <div style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', paddingBottom: '40px' }}>
@@ -55,117 +89,45 @@ export default function ChallengeResult() {
           <div style={{ fontSize: '36px', marginBottom: '8px' }}>🎉</div>
           <h2 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '4px', color: 'rgba(255,255,255,0.7)' }}>{challenge.title}</h2>
           <p style={{ fontSize: '22px', fontWeight: 'bold', color: 'var(--warning)' }}>
-            {successMembers.length}/{challenge.totalMembers}명 완주!
+            {activeMembers.length}명 완료!
           </p>
         </div>
 
-        {/* 보증금 정산 현황 */}
+        {/* 포인트 보상 현황 */}
         <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: '1px solid var(--border-color)' }}>
           <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Wallet size={18} color="var(--primary)" /> 보증금 정산 현황
+            <Coins size={18} color="var(--primary)" /> 포인트 보상
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>전체 보증금 풀</span>
-              <span style={{ fontWeight: 'bold' }}>{totalPool.toLocaleString()}원</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>완주자 수</span>
-              <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>{successMembers.length}명</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>미완주자 수</span>
-              <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{failMembers.length}명</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid var(--border-color)', fontSize: '15px' }}>
-              <span style={{ fontWeight: 'bold' }}>1인당 환급액</span>
-              <span style={{ fontWeight: 'bold', color: 'var(--primary)', fontSize: '18px' }}>{refundPerPerson.toLocaleString()}원</span>
-            </div>
-          </div>
-          {!refundDone ? (
-            <button
-              onClick={() => setRefundDone(true)}
-              style={{ width: '100%', padding: '14px', background: 'var(--primary)', color: 'white', borderRadius: '10px', fontSize: '15px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}
-            >
-              토스페이로 {refundPerPerson.toLocaleString()}원 환급받기
-            </button>
-          ) : (
-            <div style={{ background: '#E0FAF4', color: 'var(--success)', padding: '14px', borderRadius: '10px', textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>
-              ✓ 환급 완료!
-            </div>
-          )}
-        </div>
-
-        {/* 열정 투표 섹션 */}
-        <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: '1px solid var(--border-color)' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Flame size={18} color="var(--primary)" /> 열정왕 투표
-          </h3>
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: 1.5 }}>
-            이번 챌린지에서 가장 열정적이었던 멤버에게 투표해주세요.<br />
-            이 결과는 향후 챌린지 개설자가 참여자를 선별하는 데 활용됩니다.
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+            경고 누적 횟수에 따라 완료 보상이 달라져요 (0회 5P · 1회 3P · 2회 2P · 3회 퇴출 0P)
           </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
-            {successMembers.map((member) => (
-              <div key={member.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#F8F9FA', borderRadius: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#FFF0EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
-                    {member.avatar}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{member.username}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {member.successDays}/{member.totalDays}일 성공
-                    </div>
-                  </div>
-                </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {activeMembers.map((m) => (
+              <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: '#F8F9FA', borderRadius: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--primary)', minWidth: '20px', textAlign: 'center' }}>
-                    {member.passionVote > 0 ? `+${member.passionVote}` : ''}
-                  </span>
-                  <button
-                    onClick={() => handlePassionVote(member.id)}
-                    disabled={member.myVoted}
-                    style={{
-                      padding: '8px 16px', borderRadius: '20px', border: 'none', cursor: member.myVoted ? 'default' : 'pointer',
-                      background: member.myVoted ? '#E0FAF4' : 'var(--primary)',
-                      color: member.myVoted ? 'var(--success)' : 'white',
-                      fontSize: '13px', fontWeight: 'bold',
-                      display: 'flex', alignItems: 'center', gap: '4px'
-                    }}
-                  >
-                    <ThumbsUp size={14} /> {member.myVoted ? '투표 완료' : '투표'}
-                  </button>
+                  <span style={{ fontSize: '18px' }}>{m.profiles?.avatar || '🐰'}</span>
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{m.profiles?.nickname || '익명'}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{m.reward.label} · 인증 {m.certCount}회</div>
+                  </div>
                 </div>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--primary)' }}>+{m.reward.points}P</span>
               </div>
             ))}
           </div>
 
-          {failMembers.length > 0 && (
-            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>미완주 멤버</p>
-              {failMembers.map((member) => (
-                <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', opacity: 0.5 }}>
-                  <div style={{ fontSize: '16px' }}>{member.avatar}</div>
-                  <span style={{ fontSize: '14px' }}>{member.username}</span>
-                  <span style={{ fontSize: '12px', color: 'var(--primary)' }}>— {member.successDays}/{member.totalDays}일</span>
+          {(kickedMembers.length > 0 || gaveUpMembers.length > 0) && (
+            <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '14px', paddingTop: '12px' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <ShieldAlert size={12} /> 미완료 참여자
+              </p>
+              {[...kickedMembers, ...gaveUpMembers].map((m) => (
+                <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 0', opacity: 0.5, fontSize: '13px' }}>
+                  <span>{m.profiles?.avatar}</span>
+                  <span>{m.profiles?.nickname}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>— {m.status === 'kicked' ? '퇴출' : '중도 포기'}</span>
                 </div>
               ))}
-            </div>
-          )}
-
-          {allVoted && !passionVoteDone && (
-            <button
-              onClick={() => setPassionVoteDone(true)}
-              style={{ width: '100%', marginTop: '12px', padding: '14px', background: 'var(--secondary)', color: 'white', borderRadius: '10px', fontSize: '15px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}
-            >
-              투표 결과 제출하기
-            </button>
-          )}
-          {passionVoteDone && (
-            <div style={{ marginTop: '12px', background: '#E0FAF4', color: 'var(--success)', padding: '14px', borderRadius: '10px', textAlign: 'center', fontWeight: 'bold', fontSize: '15px' }}>
-              ✓ 열정 투표 완료! 결과가 반영됩니다.
             </div>
           )}
         </div>
@@ -173,16 +135,18 @@ export default function ChallengeResult() {
         {/* 랭킹 */}
         <div style={{ background: 'white', borderRadius: '16px', padding: '20px', border: '1px solid var(--border-color)' }}>
           <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Trophy size={18} color="var(--warning)" /> 이번 챌린지 랭킹
+            <Trophy size={18} color="var(--warning)" /> 인증 랭킹
           </h3>
-          {[...successMembers].sort((a, b) => b.successDays - a.successDays).map((member, idx) => (
-            <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: idx < successMembers.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
+          {ranking.length === 0 ? (
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>완료한 참여자가 없어요</p>
+          ) : ranking.map((member, idx) => (
+            <div key={member.user_id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: idx < ranking.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
               <span style={{ fontSize: '18px', width: '28px', textAlign: 'center' }}>
                 {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`}
               </span>
-              <span style={{ fontSize: '18px' }}>{member.avatar}</span>
-              <span style={{ fontWeight: 'bold', flex: 1 }}>{member.username}</span>
-              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{member.successDays}일 성공</span>
+              <span style={{ fontSize: '18px' }}>{member.profiles?.avatar}</span>
+              <span style={{ fontWeight: 'bold', flex: 1 }}>{member.profiles?.nickname}</span>
+              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{member.certCount}회 인증</span>
             </div>
           ))}
         </div>

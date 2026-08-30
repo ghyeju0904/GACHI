@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Flame, Users, Wallet, ChevronRight } from 'lucide-react';
+import { Search, Flame, Users, Coins, ChevronRight, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { logEvent } from '../../services/logger';
+import { getProfileId } from '../../utils/getProfileId';
 
 export default function Explore() {
   const navigate = useNavigate();
@@ -10,6 +11,7 @@ export default function Explore() {
   const [searchQuery,    setSearchQuery]    = useState('');
   const [challenges,     setChallenges]     = useState([]);
   const [loading,        setLoading]        = useState(true);
+  const [favoriteIds,    setFavoriteIds]    = useState(new Set());
 
   useEffect(() => {
     logEvent('page_view', '/explore');
@@ -25,7 +27,29 @@ export default function Explore() {
       setLoading(false);
     };
     fetchChallenges();
+
+    const loadFavorites = async () => {
+      const profileId = await getProfileId();
+      if (!profileId) return;
+      const { data } = await supabase.from('favorites').select('challenge_id').eq('user_id', profileId);
+      setFavoriteIds(new Set((data || []).map((f) => String(f.challenge_id))));
+    };
+    loadFavorites();
   }, []);
+
+  const toggleFavorite = async (e, challengeId) => {
+    e.stopPropagation();
+    const profileId = await getProfileId();
+    if (!profileId) return;
+    const key = String(challengeId);
+    if (favoriteIds.has(key)) {
+      await supabase.from('favorites').delete().eq('user_id', profileId).eq('challenge_id', challengeId);
+      setFavoriteIds((prev) => { const next = new Set(prev); next.delete(key); return next; });
+    } else {
+      await supabase.from('favorites').upsert({ user_id: profileId, challenge_id: challengeId }, { onConflict: 'user_id,challenge_id' });
+      setFavoriteIds((prev) => new Set(prev).add(key));
+    }
+  };
 
   const categories = useMemo(() => {
     const cats = [...new Set(challenges.map((c) => c.category))];
@@ -93,10 +117,15 @@ export default function Explore() {
                   <div style={{ fontSize: '15px', fontWeight: 'bold', margin: '4px 0 8px' }}>{ch.title}</div>
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Users size={11} /> 0/{ch.max_members}명</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Wallet size={11} /> {ch.deposit?.toLocaleString()}원</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Coins size={11} /> 참여비 2P</span>
                   </div>
                 </div>
-                <ChevronRight size={18} color="var(--text-muted)" style={{ marginLeft: '10px', flexShrink: 0 }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+                  <button onClick={(e) => toggleFavorite(e, ch.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', padding: '4px' }}>
+                    <Star size={16} color={favoriteIds.has(String(ch.id)) ? '#FFD700' : 'var(--border-color)'} fill={favoriteIds.has(String(ch.id)) ? '#FFD700' : 'none'} />
+                  </button>
+                  <ChevronRight size={18} color="var(--text-muted)" style={{ marginLeft: '2px' }} />
+                </div>
               </div>
             ))}
           </div>

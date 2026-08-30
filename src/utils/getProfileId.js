@@ -1,5 +1,6 @@
 import { supabase } from '../services/supabase';
 import { getDeviceId } from './deviceId';
+import { awardPoints } from './points';
 
 export async function getProfileId() {
   const deviceId = getDeviceId();
@@ -18,6 +19,11 @@ export async function getProfileId() {
     .upsert({ device_id: deviceId }, { onConflict: 'device_id' })
     .select('id')
     .single();
+
+  if (created?.id) {
+    // 신규 회원가입 웰컴 포인트 10점 즉시 지급
+    await awardPoints(created.id, 10, 'welcome', '웰컴 포인트');
+  }
 
   return created?.id || null;
 }

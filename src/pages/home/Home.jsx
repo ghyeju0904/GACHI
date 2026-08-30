@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Bell, Flame, ChevronRight, ChevronDown, ChevronUp, Search, Users, Wallet, LogOut } from 'lucide-react';
+import { Bell, Flame, ChevronRight, ChevronDown, ChevronUp, Search, Users, Coins, LogOut, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { logEvent } from '../../services/logger';
@@ -44,6 +44,31 @@ export default function Home() {
     try { return new Set(JSON.parse(localStorage.getItem('given_up_challenges') || '[]').map(String)); }
     catch { return new Set(); }
   });
+  const [favoriteIds, setFavoriteIds] = useState(new Set());
+
+  useEffect(() => {
+    const loadFavorites = async () => {
+      const profileId = await getProfileId();
+      if (!profileId) return;
+      const { data } = await supabase.from('favorites').select('challenge_id').eq('user_id', profileId);
+      setFavoriteIds(new Set((data || []).map((f) => String(f.challenge_id))));
+    };
+    loadFavorites();
+  }, []);
+
+  const toggleFavorite = async (e, challengeId) => {
+    e.stopPropagation();
+    const profileId = await getProfileId();
+    if (!profileId) return;
+    const key = String(challengeId);
+    if (favoriteIds.has(key)) {
+      await supabase.from('favorites').delete().eq('user_id', profileId).eq('challenge_id', challengeId);
+      setFavoriteIds((prev) => { const next = new Set(prev); next.delete(key); return next; });
+    } else {
+      await supabase.from('favorites').upsert({ user_id: profileId, challenge_id: challengeId }, { onConflict: 'user_id,challenge_id' });
+      setFavoriteIds((prev) => new Set(prev).add(key));
+    }
+  };
 
   // Supabase에서 챌린지 목록 fetch
   useEffect(() => {
@@ -57,9 +82,9 @@ export default function Home() {
       if (!error && data) {
         setAllChallenges(data.map((ch) => ({
           ...ch,
-          maxMembers:  ch.max_members,
-          certifyType: ch.certify_type,
-          members:     0,
+          maxMembers:   ch.max_members,
+          certifyTypes: ch.certify_types,
+          members:      0,
         })));
       }
       setLoadingChallenges(false);
@@ -138,16 +163,15 @@ export default function Home() {
         const synced = data
           .filter((m) => m.challenges?.status === 'active')
           .map((m) => ({
-          id:          m.challenges.id,
-          title:       m.challenges.title,
-          category:    m.challenges.category,
-          deposit:     m.challenges.deposit,
-          dDay:        m.challenges.duration,
-          streak:      0,
-          role:        m.role,
-          maxMembers:  m.challenges.max_members,
-          certifyType: m.challenges.certify_type,
-          joinedAt:    m.joined_at,
+          id:           m.challenges.id,
+          title:        m.challenges.title,
+          category:     m.challenges.category,
+          dDay:         m.challenges.duration,
+          streak:       0,
+          role:         m.role,
+          maxMembers:   m.challenges.max_members,
+          certifyTypes: m.challenges.certify_types,
+          joinedAt:     m.joined_at,
         }));
 
         // localStorage 갱신
@@ -189,7 +213,7 @@ export default function Home() {
 
     setJoinedFromLS((prev) => prev.filter((c) => String(c.id) !== challengeId));
     setGivenUpIds((prev) => new Set([...prev, challengeId]));
-    logEvent('challenge_give_up', '/home', { challenge_id: challengeId, deposit: giveUpModal?.deposit });
+    logEvent('challenge_give_up', '/home', { challenge_id: challengeId });
     closeGiveUp();
   };
 
@@ -210,7 +234,6 @@ export default function Home() {
           id:         c.id,
           title:      c.title,
           category:   c.category,
-          deposit:    c.deposit || 0,
           members:    0,
           maxMembers: c.memberCount || c.maxMembers || 30,
           max_members: c.memberCount || c.maxMembers || 30,
@@ -255,7 +278,7 @@ export default function Home() {
         <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.title}</div>
         <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
           {isOwned
-            ? `${ch.category} · ${ch.deposit?.toLocaleString() || 0}원`
+            ? ch.category
             : `D-${ch.dDay} · 🔥 ${ch.streak}일`}
         </div>
       </div>
@@ -433,10 +456,15 @@ export default function Home() {
                       <div style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '6px' }}>{ch.title}</div>
                       <div style={{ display: 'flex', gap: '10px', fontSize: '12px', color: 'var(--text-muted)' }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Users size={11} /> {effectiveMembers}/{maxM}명</span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Wallet size={11} /> {ch.deposit?.toLocaleString()}원</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}><Coins size={11} /> 참여비 2P</span>
                       </div>
                     </div>
-                    <ChevronRight size={18} color="var(--text-muted)" style={{ marginLeft: '10px', flexShrink: 0 }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                      <button onClick={(e) => toggleFavorite(e, ch.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', padding: '4px' }}>
+                        <Star size={16} color={favoriteIds.has(String(ch.id)) ? '#FFD700' : 'var(--border-color)'} fill={favoriteIds.has(String(ch.id)) ? '#FFD700' : 'none'} />
+                      </button>
+                      <ChevronRight size={18} color="var(--text-muted)" style={{ marginLeft: '2px' }} />
+                    </div>
                   </div>
                 );
               })}
@@ -485,9 +513,8 @@ export default function Home() {
                   <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: '#EF4444' }}>중도 포기 = 실패 처리</h3>
                   <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
                     중도 포기는 챌린지 실패와 동일하게 처리돼요.<br />
-                    납부하신 보증금{' '}
-                    <strong style={{ color: '#EF4444' }}>{giveUpModal.deposit?.toLocaleString() ?? 0}원</strong>은<br />
-                    <strong>반환되지 않습니다.</strong>
+                    참여 시 사용한 <strong style={{ color: '#EF4444' }}>포인트(2P)</strong>는<br />
+                    <strong>환급되지 않습니다.</strong>
                   </p>
                 </div>
                 <button onClick={handleConfirmGiveUp}

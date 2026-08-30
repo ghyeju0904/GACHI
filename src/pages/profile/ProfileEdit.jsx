@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Check } from 'lucide-react';
+import { ArrowLeft, Check, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { getDeviceId } from '../../utils/deviceId';
+import { getProfileId } from '../../utils/getProfileId';
 import { logEvent } from '../../services/logger';
 
 const AVATAR_OPTIONS = ['🐰', '🐻', '🦊', '🐯', '🐧', '🦁', '🐸', '🐨', '🐼', '🦝'];
@@ -14,6 +15,9 @@ export default function ProfileEdit() {
   const [nickname, setNickname] = useState(DEFAULT_PROFILE.nickname);
   const [bio,      setBio]      = useState(DEFAULT_PROFILE.bio);
   const [saving,   setSaving]   = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [withdrawStep, setWithdrawStep] = useState(1);
+  const [withdrawing,  setWithdrawing]  = useState(false);
 
   useEffect(() => {
     logEvent('page_view', '/profile/edit');
@@ -69,6 +73,19 @@ export default function ProfileEdit() {
 
     setSaving(false);
     navigate('/profile');
+  };
+
+  const handleWithdraw = async () => {
+    setWithdrawing(true);
+    try {
+      const profileId = await getProfileId();
+      if (profileId) {
+        await supabase.rpc('withdraw_account', { p_user: profileId });
+      }
+    } catch { /* 실패해도 로컬 상태는 초기화한다 */ }
+
+    localStorage.clear();
+    navigate('/onboarding');
   };
 
   return (
@@ -146,7 +163,63 @@ export default function ProfileEdit() {
         }}>
           {saving ? '저장 중...' : '저장하기'}
         </button>
+
+        {/* 위험 구역: 서비스 탈퇴 */}
+        <section style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-color)' }}>
+          <button onClick={() => { setShowWithdraw(true); setWithdrawStep(1); }} style={{
+            width: '100%', padding: '14px', background: 'none', border: '1px solid #FFD4C8',
+            borderRadius: '12px', color: '#EF4444', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer',
+          }}>
+            서비스 탈퇴하기
+          </button>
+        </section>
       </div>
+
+      {showWithdraw && (
+        <div onClick={() => !withdrawing && setShowWithdraw(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: '480px', background: 'white', borderRadius: '20px 20px 0 0', padding: '28px 24px 40px' }}>
+            {withdrawStep === 1 ? (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <AlertTriangle size={44} color="#EF4444" style={{ marginBottom: '14px' }} />
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: '#EF4444' }}>정말 탈퇴하시겠어요?</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+                    탈퇴 시 <strong>개설한 모임</strong>과<br /><strong>보유 포인트</strong>가 즉시 소멸되며<br />복구할 수 없어요.
+                  </p>
+                </div>
+                <button onClick={() => setWithdrawStep(2)}
+                  style={{ width: '100%', padding: '15px', background: '#EF4444', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '10px' }}>
+                  계속 진행할게요
+                </button>
+                <button onClick={() => setShowWithdraw(false)}
+                  style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+                  취소
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <div style={{ fontSize: '44px', marginBottom: '14px' }}>👋</div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px' }}>마지막 확인이에요</h3>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+                    이 버튼을 누르면 즉시 탈퇴 처리돼요.
+                  </p>
+                </div>
+                <button onClick={handleWithdraw} disabled={withdrawing}
+                  style={{ width: '100%', padding: '15px', background: withdrawing ? '#FCA5A5' : '#EF4444', color: 'white', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', border: 'none', cursor: withdrawing ? 'default' : 'pointer', marginBottom: '10px' }}>
+                  {withdrawing ? '처리 중...' : '탈퇴하기'}
+                </button>
+                <button onClick={() => setWithdrawStep(1)} disabled={withdrawing}
+                  style={{ width: '100%', padding: '12px', background: 'none', color: 'var(--text-muted)', borderRadius: '12px', fontSize: '14px', border: 'none', cursor: 'pointer' }}>
+                  돌아가기
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,11 +1,17 @@
 [project]
 # Supabase 프로젝트 레퍼런스 ID (supabase 대시보드 > Settings > General에서 확인)
-project_id = "your-project-ref"
+project_id = "zjkwasvcfukvjjmrzgpt"
 
 [functions.check-challenge-expiry]
 verify_jwt = false
 
 [functions.check-early-close]
+verify_jwt = false
+
+[functions.check-uncertified-reminder]
+verify_jwt = false
+
+[functions.send-daily-report]
 verify_jwt = false
 
 # Cron 스케줄 (pg_cron — Supabase 대시보드 > Database > Extensions > pg_cron 활성화 필요)
@@ -16,8 +22,8 @@ verify_jwt = false
 #   'check-challenge-expiry',
 #   '0 0 * * *',
 #   $$ select net.http_post(
-#     url := 'https://<project-ref>.supabase.co/functions/v1/check-challenge-expiry',
-#     headers := '{"Authorization": "Bearer <anon-key>"}'::jsonb
+#     url := 'https://zjkwasvcfukvjjmrzgpt.supabase.co/functions/v1/check-challenge-expiry',
+#     headers := '{"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpqa3dhc3ZjZnVrdmpqbXJ6Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTUwNjksImV4cCI6MjA4OTg5MTA2OX0.UnnI1opSOEzEDGdV0j4fdWnoDaNOfYFtIgSS4SCk1L4"}'::jsonb
 #   ) $$
 # );
 #
@@ -26,7 +32,27 @@ verify_jwt = false
 #   'check-early-close',
 #   '0 * * * *',
 #   $$ select net.http_post(
-#     url := 'https://<project-ref>.supabase.co/functions/v1/check-early-close',
-#     headers := '{"Authorization": "Bearer <anon-key>"}'::jsonb
+#     url := 'https://zjkwasvcfukvjjmrzgpt.supabase.co/functions/v1/check-early-close',
+#     headers := '{"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpqa3dhc3ZjZnVrdmpqbXJ6Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTUwNjksImV4cCI6MjA4OTg5MTA2OX0.UnnI1opSOEzEDGdV0j4fdWnoDaNOfYFtIgSS4SCk1L4"}'::jsonb
+#   ) $$
+# );
+#
+# -- 매일 21:59 KST(12:59 UTC): 인증 마감 2시간 전 미인증 알림
+# select cron.schedule(
+#   'check-uncertified-reminder',
+#   '59 12 * * *',
+#   $$ select net.http_post(
+#     url := 'https://zjkwasvcfukvjjmrzgpt.supabase.co/functions/v1/check-uncertified-reminder',
+#     headers := '{"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpqa3dhc3ZjZnVrdmpqbXJ6Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTUwNjksImV4cCI6MjA4OTg5MTA2OX0.UnnI1opSOEzEDGdV0j4fdWnoDaNOfYFtIgSS4SCk1L4"}'::jsonb
+#   ) $$
+# );
+#
+# -- 매일 00:00 KST(전날 15:00 UTC): 모임장 일일 리포트 발송
+# select cron.schedule(
+#   'send-daily-report',
+#   '0 15 * * *',
+#   $$ select net.http_post(
+#     url := 'https://zjkwasvcfukvjjmrzgpt.supabase.co/functions/v1/send-daily-report',
+#     headers := '{"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpqa3dhc3ZjZnVrdmpqbXJ6Z3B0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTUwNjksImV4cCI6MjA4OTg5MTA2OX0.UnnI1opSOEzEDGdV0j4fdWnoDaNOfYFtIgSS4SCk1L4"}'::jsonb
 #   ) $$
 # );

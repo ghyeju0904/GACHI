@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut, Settings } from 'lucide-react';
+import { ArrowLeft, CheckCircle, ThumbsUp, ThumbsDown, Flame, Trophy, LogOut, Settings, Flag } from 'lucide-react';
 import { logEvent } from '../../services/logger';
 import { supabase } from '../../services/supabase';
 import { getProfileId } from '../../utils/getProfileId';
@@ -151,6 +151,48 @@ export default function GroupFeed() {
   const [totalMembers, setTotalMembers] = useState(0);
   const [myProfileId,  setMyProfileId]  = useState(null);
   const [isOwner,      setIsOwner]      = useState(false);
+  const [hasReportedToday, setHasReportedToday] = useState(false);
+  const [reportMsg,        setReportMsg]        = useState('');
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  useEffect(() => {
+    const checkReported = async () => {
+      const profileId = await getProfileId();
+      if (!profileId) return;
+      const { data } = await supabase
+        .from('reports')
+        .select('id')
+        .eq('challenge_id', id)
+        .eq('reporter_id', profileId)
+        .eq('report_date', todayStr)
+        .maybeSingle();
+      setHasReportedToday(!!data);
+    };
+    checkReported();
+  }, [id]);
+
+  const handleReport = async (post) => {
+    if (hasReportedToday || post.isMyPost) return;
+    const profileId = await getProfileId();
+    if (!profileId) return;
+
+    const { error } = await supabase.from('reports').insert({
+      challenge_id:      id,
+      certification_id:  post.certId,
+      reporter_id:        profileId,
+      reported_user_id:   post.userId,
+      report_date:        todayStr,
+    });
+
+    if (error) {
+      setReportMsg('오늘은 이미 신고했어요. 신고는 모임당 하루 1회만 가능해요.');
+    } else {
+      setHasReportedToday(true);
+      setReportMsg('신고가 접수됐어요. 모임장이 익일 오전 9시까지 확인해요.');
+    }
+    setTimeout(() => setReportMsg(''), 3000);
+  };
 
   useEffect(() => {
     const fetchFeed = async () => {
@@ -168,6 +210,7 @@ export default function GroupFeed() {
         setPosts(certData.map((cert) => ({
           id:        cert.id,
           certId:    cert.id,
+          userId:    cert.user_id,
           username:  cert.profiles?.nickname || '익명',
           avatar:    cert.profiles?.avatar   || '🐰',
           time:      getRelativeTime(cert.created_at),
@@ -185,7 +228,7 @@ export default function GroupFeed() {
       // 참여자 수 + 운영자 여부 확인
       const [{ data: memberData }, { data: chData }] = await Promise.all([
         supabase.from('challenge_members').select('role, user_id, status').eq('challenge_id', id),
-        supabase.from('challenges').select('created_by, owner_participates').eq('id', id).single(),
+        supabase.from('challenges').select('created_by').eq('id', id).single(),
       ]);
 
       const active = (memberData || []).filter((m) => m.status !== 'observer');
@@ -355,7 +398,7 @@ export default function GroupFeed() {
               )}
             </div>
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              동의 시 챌린지가 조기 종료되고 보증금이 100% 반환돼요 · 현재 {closeVoteCount}명 동의
+              동의 시 챌린지가 조기 종료돼요 · 현재 {closeVoteCount}명 동의
             </p>
             {isExpired ? (
               <div style={{ padding: '10px', background: '#F3F4F6', borderRadius: '8px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
@@ -412,6 +455,12 @@ export default function GroupFeed() {
         </p>
       </div>
 
+      {reportMsg && (
+        <div style={{ margin: '12px 20px 0', padding: '10px 14px', background: '#FFF0EB', color: 'var(--primary)', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', textAlign: 'center' }}>
+          {reportMsg}
+        </div>
+      )}
+
       {/* 인증 타임라인 */}
       <div style={{ padding: '20px' }}>
         {posts.map((post) => {
@@ -436,17 +485,26 @@ export default function GroupFeed() {
               )}
 
               {/* 유저 정보 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                <div style={{ width: '40px', height: '40px', background: '#F3F4F6', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
-                  {post.avatar}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 'bold', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {post.username}
-                    {voteStatus === 'approved' && <CheckCircle size={14} color="var(--success)" />}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '40px', height: '40px', background: '#F3F4F6', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                    {post.avatar}
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{post.time}</div>
+                  <div>
+                    <div style={{ fontWeight: 'bold', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {post.username}
+                      {voteStatus === 'approved' && <CheckCircle size={14} color="var(--success)" />}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{post.time}</div>
+                  </div>
                 </div>
+                {!post.isMyPost && (
+                  <button onClick={() => handleReport(post)} disabled={hasReportedToday}
+                    style={{ background: 'none', border: 'none', cursor: hasReportedToday ? 'default' : 'pointer', color: hasReportedToday ? '#D1D5DB' : 'var(--text-muted)', display: 'flex', padding: '4px' }}
+                    title="주제에 부합하지 않는 인증 신고">
+                    <Flag size={16} />
+                  </button>
+                )}
               </div>
 
               {/* 인증 콘텐츠 */}
@@ -561,9 +619,8 @@ export default function GroupFeed() {
                   <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '10px', color: '#EF4444' }}>중도 포기 = 실패 처리</h3>
                   <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
                     중도 포기는 챌린지 실패와 동일하게 처리돼요.<br />
-                    납부하신 보증금{' '}
-                    <strong style={{ color: '#EF4444' }}>{challengeData?.deposit?.toLocaleString() ?? 0}원</strong>은<br />
-                    <strong>반환되지 않습니다.</strong>
+                    참여 시 사용한 <strong style={{ color: '#EF4444' }}>포인트(2P)</strong>는<br />
+                    <strong>환급되지 않습니다.</strong>
                   </p>
                 </div>
                 <button onClick={handleConfirmGiveUp}

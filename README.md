@@ -1,6 +1,6 @@
 # 가치(GACHI) - 같이 도전하는 챌린지
 
-보증금 기반 챌린지 참여 서비스. 목표를 함께 달성하고, 성공하면 보증금을 돌려받는다.
+포인트 기반 챌린지 참여 서비스. 웰컴 포인트로 시작해 모임 참여·완료 보상까지 전부 포인트로 순환한다.
 
 ## 기술 스택
 
@@ -34,10 +34,10 @@ src/
 │   ├── explore/
 │   │   └── Explore.jsx             # 챌린지 탐색
 │   ├── challenge/
-│   │   ├── ChallengeDetail.jsx     # 챌린지 상세 + 보증금 납부 참여
+│   │   ├── ChallengeDetail.jsx     # 챌린지 상세 + 포인트 참여
 │   │   └── ChallengeCreate.jsx     # 챌린지 개설
 │   ├── manage/
-│   │   └── ChallengeManage.jsx     # 챌린지 관리 (챌린지 개설자 전용)
+│   │   └── ChallengeManage.jsx     # 챌린지 관리 (모임장 / 부모임장)
 │   ├── feed/
 │   │   └── GroupFeed.jsx           # 그룹 인증 피드
 │   ├── certify/
@@ -56,7 +56,9 @@ src/
 │
 ├── utils/
 │   ├── deviceId.js                 # 익명 디바이스 ID 생성/조회
-│   └── getProfileId.js             # device_id → profiles.id 변환
+│   ├── getProfileId.js             # device_id → profiles.id 변환 (+ 웰컴 포인트 지급)
+│   ├── points.js                   # 포인트 증감/조회 (adjust_points RPC 래퍼)
+│   └── onboardingRewards.js        # 온보딩 미션 1회성 포인트 지급
 │
 ├── assets/
 │   ├── fonts/                      # Moneygraphy (Rounded / Pixel)
@@ -90,36 +92,59 @@ src/
 
 ## 구현된 기능
 
+### 포인트 시스템
+- 신규 가입 시 웰컴 포인트 10점 즉시 지급
+- 온보딩 필수/옵션 미션 완료 시 포인트 지급 (관심사 설정, 소개글 확인, 즐겨찾기, 참여, 개설)
+- 모임 참여 시 2P 소모, 중도 자진 탈퇴 시 환급 없음
+- 챌린지 완료 시 경고 횟수에 따라 포인트 보상 (0회 5P · 1회 3P · 2회 2P · 3회 퇴출 0P)
+- 마이페이지에서 카테고리별 포인트 내역 및 완료한 챌린지 기록 확인
+
 ### 온보딩
 - 관심 카테고리 최대 5개 선택 (불꽃 인디케이터)
+- 운영 중인 모임 소개글 확인 + 즐겨찾기 미션
 - Supabase `profiles` 테이블에 관심사 저장
 
-### 홈
+### 홈 / 탐색
 - Supabase 챌린지 목록 연동
 - 카테고리 필터 드롭다운 + 제목/카테고리 검색
-- 관심 카테고리 우선 정렬
+- 관심 카테고리 우선 정렬, 즐겨찾기 토글
 - 내 챌린지 아코디언 (운영 중 / 참여 중)
 - 오늘의 인증 현황 배너
 - 중도 포기 2단계 확인 플로우
 - Supabase Realtime 실시간 알림 배지
 
 ### 챌린지 상세
+- 공개/비공개 모임, 복수 인증 방식 표시
 - 참여 인원 실시간 표시 (모집 중 / 마감 임박 / 멤버 마감)
-- 보증금 납부 바텀시트 (토스페이 UI)
-- 동시 참여 방지 (납부 전 서버 인원 재확인)
+- 포인트 참여 확인 모달 (2P 차감)
+- 동시 참여 방지 (참여 전 서버 인원 재확인)
 - 강퇴 실시간 감지 (Supabase Realtime)
 
-### 챌린지 관리 (운영자)
-- 참여자 목록 + 오늘 인증 여부 표시
+### 챌린지 관리 (운영자 / 부모임장)
+- 참여자 목록 + 오늘 인증 여부 + 경고 횟수 표시
+- 부모임장 지정/해제
+- 신고 관리 (경고 부여 / 기각 / 허위 신고 처리)
+- 모임장 본인 인증 신고 시 참여자 투표
+- 모임장 공석 시 승계 제안 · 자원 · 존속 투표
 - 참여자 강퇴 및 알림 전송
 - 모집 기간 연장 (최대 3일, 1회 제한)
 - 완주 전 챌린지 중지 요청
   - 참여자 75% 이상 동의 시 확정
   - 24시간 카운트다운 타이머
-  - 확정 시 보증금 전액 반환 알림 발송
+
+### 인증 / 신고 / 경고
+- 사진·텍스트·체크인 중 개설자가 지정한 방식(복수 가능)으로 인증
+- 하루 1회 인증, 1회 한정 수정 가능
+- 인증 마감 2시간 전 미인증 알림 (Edge Function 자동 발송)
+- 부적합 인증 신고 (모임당 1일 1회), 경고 3회 누적 시 자동 퇴출
+- 모임장 대상 일일 리포트 자동 발송 (Edge Function)
+
+### 마이페이지 / 탈퇴
+- 포인트 잔액, 카테고리별 내역, 완료한 챌린지 기록
+- 서비스 탈퇴 시 개설한 모임 및 보유 포인트 즉시 소멸
 
 ### 알림
-- 강퇴 / 중지 요청 / 챌린지 종료 알림
+- 강퇴 / 경고 / 신고 처리 / 중지 요청 / 챌린지 종료 / 승계 제안 / 일일 리포트 알림
 - Supabase Realtime 실시간 수신
 
 ---
@@ -128,13 +153,22 @@ src/
 
 | 테이블 | 용도 |
 |--------|------|
-| `profiles` | 유저 프로필 (device_id, avatar, nickname, interests) |
-| `challenges` | 챌린지 정보 |
-| `challenge_members` | 챌린지 참여자 (role, status, joined_at) |
-| `certifications` | 인증 기록 (user_id, challenge_id, cert_date) |
+| `profiles` | 유저 프로필 (device_id, avatar, nickname, interests, points, onboarding_rewards) |
+| `challenges` | 챌린지 정보 (is_public, certify_types, sub_owner_id, day_type 등) |
+| `challenge_members` | 챌린지 참여자 (role, status, warning_count, reward_claimed) |
+| `certifications` | 인증 기록 (user_id, challenge_id, cert_date, edit_count) |
 | `early_close_votes` | 완주 전 중지 투표 |
+| `favorites` | 즐겨찾기 |
+| `point_transactions` | 포인트 내역 원장 |
+| `reports` | 인증 신고 |
+| `warning_log` | 경고 이력 |
+| `succession_requests` | 모임장 승계 제안 |
+| `owner_report_votes` | 모임장 인증 신고 투표 |
+| `continuation_votes` | 모임 존속 여부 투표 |
 | `notifications` | 알림 (user_id, type, message, read) |
 | `user_logs` | 행동 로그 |
+
+RPC 함수: `adjust_points`, `apply_warning`, `withdraw_account` (`supabase/migrations/0001_points_system.sql` 참고)
 
 > 인증은 `device_id` (localStorage UUID) 기반. 추후 Supabase Auth 전환 예정.
 

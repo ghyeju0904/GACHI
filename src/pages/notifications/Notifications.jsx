@@ -16,9 +16,19 @@ function getRelativeTime(isoStr) {
 }
 
 const TYPE_ICON = {
-  early_close_request: '⚠️',
-  challenge_join:      '🎉',
-  certification:       '🔥',
+  early_close_request:   '⚠️',
+  challenge_join:        '🎉',
+  certification:         '🔥',
+  warning:               '⚠️',
+  kicked:                '🚫',
+  owner_evicted:         '👑',
+  owner_evicted_refund:  '💰',
+  succession_offer:      '👑',
+  uncertified_reminder:  '⏰',
+  daily_report:          '📊',
+  challenge_closed:      '🔒',
+  challenge_completed:   '🏁',
+  early_closed:          '🔒',
 };
 
 export default function Notifications() {
